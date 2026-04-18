@@ -1,0 +1,23 @@
+[
+  {"name":"SPR","lon":0,"lat":-70,"type":"zone","fullName":"South Polar Region"},
+  {"name":"S3TZ","lon":0,"lat":-54,"type":"zone","fullName":"South South South Temperate Zone"},
+  {"name":"S3TB","lon":0,"lat":-48,"type":"belt","fullName":"South South South Temperate Belt"},
+  {"name":"SSTZ","lon":0,"lat":-43,"type":"zone","fullName":"South South Temperate Zone"},
+  {"name":"SSTB","lon":0,"lat":-38,"type":"belt","fullName":"South South Temperate Belt"},
+  {"name":"STZ","lon":0,"lat":-34.5,"type":"zone","fullName":"South Temperate Zone"},
+  {"name":"STB","lon":0,"lat":-30,"type":"belt","fullName":"South Temperate Belt"},
+  {"name":"STropZ","lon":0,"lat":-24,"type":"zone","fullName":"South Tropical Zone"},
+  {"name":"SEB","lon":0,"lat":-14,"type":"belt","fullName":"South Equatorial Belt"},
+  {"name":"EZ","lon":0,"lat":0,"type":"zone","fullName":"Equatorial Zone"},
+  {"name":"NEB","lon":0,"lat":12,"type":"belt","fullName":"North Equatorial Belt"},
+  {"name":"NTropZ","lon":0,"lat":20.5,"type":"zone","fullName":"North Tropical Zone"},
+  {"name":"NTB","lon":0,"lat":27.5,"type":"belt","fullName":"North Temperate Belt"},
+  {"name":"NTZ","lon":0,"lat":33,"type":"zone","fullName":"North Temperate Zone"},
+  {"name":"NNTB","lon":0,"lat":37.5,"type":"belt","fullName":"North North Temperate Belt"},
+  {"name":"NNTZ","lon":0,"lat":42.5,"type":"zone","fullName":"North North Temperate Zone"},
+  {"name":"N3TB","lon":0,"lat":47.5,"type":"belt","fullName":"North North North Temperate Belt"},
+  {"name":"N3TZ","lon":0,"lat":54,"type":"zone","fullName":"North North North Temperate Zone"},
+  {"name":"NPR","lon":0,"lat":70,"type":"zone","fullName":"North Polar Region"},
+  {"name":"GRS","lon":-60,"lat":-22.5,"type":"storm","fullName":"Great Red Spot"},
+  {"name":"Oval BA","lon":-50,"lat":-33,"type":"storm","fullName":"Oval BA (Red Spot Jr.)"}
+]

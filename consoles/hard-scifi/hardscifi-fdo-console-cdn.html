@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FDO — Flight Dynamics Officer</title>
+  <!-- CDN Version: All dependencies loaded from public CDNs.
+       Requires HTTP(S) hosting — will not work from file:// URLs.
+       For offline/file:// use, see hardscifi-fdo-console.html (local libs + embedded data). -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.3.5/mqtt.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    :root {
+      --bg-primary:    #060810;
+      --bg-panel:      rgba(10,14,24,0.85);
+      --border:        rgba(74,158,255,0.15);
+      --border-bright: rgba(74,158,255,0.3);
+      --text-primary:  #c8d0dc;
+      --text-secondary:#6b7a8d;
+      --text-dim:      #3a4555;
+      --text-bright:   #e8edf5;
+      --accent:        #4a9eff;
+      --accent-glow:   rgba(74,158,255,0.4);
+      --nominal:       #2ecc71;
+      --nominal-dim:   rgba(46,204,113,0.15);
+      --caution:       #f1c40f;
+      --alarm:         #e74c3c;
+      --font-mono: 'JetBrains Mono','Fira Code','Cascadia Code','SF Mono','Consolas',monospace;
+    }
+    *,*::before,*::after { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg-primary); color:var(--text-primary); font-family:var(--font-mono); font-size:11px; overflow:hidden; }
+    /* Three.js canvas fills viewport */
+    #globe-container { position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:0; }
+    #globe-container canvas { display:block; }
+
+    /* Overlay panels float above the 3D scene */
+    .overlay { position:fixed; z-index:10; pointer-events:none; }
+    .panel { pointer-events:auto; background:var(--bg-panel); border:1px solid var(--border); border-radius:4px; padding:10px 12px; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+    .panel-title { font-size:11px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:var(--text-secondary); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+    .panel-title::before { content:''; width:3px; height:11px; background:var(--accent); border-radius:1px; }
+
+    /* Header bar */
+    .header { position:fixed; top:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:8px 20px; background:rgba(6,8,16,0.9); border-bottom:1px solid var(--border); backdrop-filter:blur(12px); }
+    .header-left { display:flex; align-items:center; gap:20px; }
+    .station-id { font-size:28px; font-weight:700; color:var(--accent); letter-spacing:0.12em; }
+    .station-role { font-size:13px; color:var(--text-secondary); letter-spacing:0.08em; text-transform:uppercase; }
+    .header-meta { display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .meta-item { display:flex; flex-direction:column; align-items:flex-end; }
+    .meta-label { font-size:10px; color:var(--text-dim); letter-spacing:0.1em; text-transform:uppercase; }
+    .meta-value { font-size:15px; font-weight:600; color:var(--text-bright); white-space:nowrap; }
+    .status-badge { display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:600; letter-spacing:0.08em; padding:3px 9px; border-radius:3px; }
+    .status-badge.nom { background:var(--nominal-dim); color:var(--nominal); }
+    .status-badge.hold { background:rgba(26,26,26,0.8); color:var(--text-dim); }
+    .status-badge.caut { background:rgba(241,196,15,0.15); color:var(--caution); }
+    .status-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+    .status-badge.nom .status-dot { animation:pulse 2s ease infinite; }
+    /* Left panels */
+    .left-panels { position:fixed; top:60px; left:12px; bottom:44px; width:300px; z-index:10; display:flex; flex-direction:column; gap:8px; overflow-y:auto; pointer-events:none; }
+    .left-panels .panel { pointer-events:auto; }
+
+    /* Right panels */
+    .right-panels { position:fixed; top:60px; right:12px; bottom:44px; width:290px; z-index:10; display:flex; flex-direction:column; gap:8px; overflow-y:auto; pointer-events:none; }
+    .right-panels .panel { pointer-events:auto; }
+
+    /* Data rows */
+    .data-row { display:flex; justify-content:space-between; align-items:baseline; padding:2px 0; border-bottom:1px solid rgba(30,36,48,0.5); gap:6px; }
+    .data-row:last-child { border-bottom:none; }
+    .data-label { font-size:12px; color:var(--text-secondary); letter-spacing:0.05em; text-transform:uppercase; white-space:nowrap; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .data-value { font-size:15px; font-weight:600; color:var(--text-bright); font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .data-unit { font-size:11px; color:var(--text-secondary); margin-left:2px; }
+    .data-row > span:last-child { white-space:nowrap; flex-shrink:0; text-align:right; }
+
+    /* Time-critical data highlights */
+    .data-row.urgent .data-value { color:var(--caution); font-size:17px; }
+    .data-row.alert .data-value { color:var(--alarm); font-size:17px; font-weight:700; }
+    .data-row.active .data-value { color:var(--nominal); font-weight:700; }
+
+    /* Sparklines */
+    .sparkline-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
+    .sparkline-label { font-size:11px; color:var(--text-secondary); width:65px; flex-shrink:0; }
+    .sparkline-canvas { flex:1; height:24px; }
+    .sparkline-value { font-size:13px; font-weight:600; color:var(--text-bright); width:70px; text-align:right; font-variant-numeric:tabular-nums; }
+
+    /* Abort panel */
+    .abort-bar { display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border:1px solid var(--border); border-radius:4px; background:var(--bg-panel); }
+    .abort-bar.armed { border-color:var(--alarm); background:rgba(231,76,60,0.1); }
+
+    /* Event log */
+    .event-log { font-size:11px; line-height:1.6; max-height:120px; overflow-y:auto; }
+    .entry { display:flex; gap:8px; }
+    .entry-time { color:var(--text-dim); flex-shrink:0; }
+    .entry-msg { color:var(--text-secondary); }
+
+    /* Footer */
+    .footer { position:fixed; bottom:0; left:0; right:0; z-index:20; display:flex; align-items:center; justify-content:space-between; padding:6px 20px; font-size:10px; color:var(--text-dim); background:rgba(6,8,16,0.9); border-top:1px solid var(--border); }
+    .footer-leds { display:flex; gap:5px; }
+    .led { width:7px; height:7px; border-radius:50%; background:#0a1a0a; border:1px solid #1a2a1a; }
+    .led.on { background:var(--nominal); box-shadow:0 0 4px var(--nominal); border-color:var(--nominal); }
+
+    ::-webkit-scrollbar { width:3px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:rgba(74,158,255,0.2); border-radius:2px; }
+
+    /* 3D overlay labels */
+    .orbit-label {
+      position: fixed; z-index: 15; pointer-events: none;
+      font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      white-space: nowrap; transform: translate(-50%, -100%);
+      padding: 1px 5px; transition: opacity 0.15s;
+    }
+    .orbit-label::after {
+      content: ''; position: absolute; bottom: -3px; left: 50%;
+      width: 1px; height: 4px; transform: translateX(-50%);
+    }
+    .orbit-label.vehicle { color: #4a9eff; text-shadow: 0 0 8px rgba(74,158,255,0.6); }
+    .orbit-label.vehicle::after { background: #4a9eff; }
+    .orbit-label.apo { color: #e67e22; text-shadow: 0 0 8px rgba(230,126,34,0.5); }
+    .orbit-label.apo::after { background: #e67e22; }
+    .orbit-label.per { color: #2ecc71; text-shadow: 0 0 8px rgba(46,204,113,0.5); }
+    .orbit-label.per::after { background: #2ecc71; }
+
+    /* Toggle switches */
+    .toggle-group { display:flex; align-items:center; gap:12px; }
+    .toggle-switch { display:inline-flex; align-items:center; gap:5px; cursor:pointer; user-select:none; font-size:8px; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-secondary); }
+    .toggle-switch input { display:none; }
+    .toggle-track { position:relative; width:26px; height:14px; border-radius:7px; background:rgba(255,255,255,0.08); border:1px solid var(--border); transition:background 0.2s, border-color 0.2s; }
+    .toggle-track::after { content:''; position:absolute; top:2px; left:2px; width:8px; height:8px; border-radius:50%; background:var(--text-dim); transition:transform 0.2s, background 0.2s; }
+    .toggle-switch input:checked + .toggle-track { background:rgba(74,158,255,0.25); border-color:var(--accent); }
+    .toggle-switch input:checked + .toggle-track::after { transform:translateX(12px); background:var(--accent); }
+
+    /* ── LIGHT THEME — The Martian HABitat / Research (Style Guide §3.2) */
+    body.light {
+      --bg-primary:    #F0F4F8;
+      --bg-panel:      rgba(224,232,240,0.88);
+      --border:        rgba(26,42,58,0.15);
+      --border-bright: rgba(26,42,58,0.30);
+      --text-primary:  #1A2A3A;
+      --text-secondary:#607080;
+      --text-dim:      #8A9AAA;
+      --text-bright:   #1A2A3A;
+      --accent:        #0088CC;
+      --accent-glow:   rgba(0,136,204,0.25);
+      --nominal:       #1A7A3A;
+      --nominal-dim:   rgba(26,122,58,0.10);
+      --caution:       #A07800;
+      --alarm:         #B52020;
+    }
+    body.light .header { background:rgba(240,244,248,0.95); border-bottom-color:rgba(26,42,58,0.12); }
+    body.light .footer { background:rgba(240,244,248,0.95); border-top-color:rgba(26,42,58,0.12); }
+    body.light .panel { background:rgba(224,232,240,0.80); border-color:rgba(26,42,58,0.12); backdrop-filter:blur(6px); }
+    body.light .status-badge.nom { background:rgba(26,122,58,0.10); color:var(--nominal); }
+    body.light .status-badge.hold { background:rgba(138,154,170,0.20); color:var(--text-dim); }
+    body.light .data-row { border-bottom-color:rgba(26,42,58,0.06); }
+    body.light .toggle-track { background:rgba(0,0,0,0.08); }
+    body.light ::-webkit-scrollbar-thumb { background:rgba(0,136,204,0.25); }
+    body.light .orbit-label.vehicle { color:#0077BB; text-shadow:none; }
+    body.light .orbit-label.apo { color:#CC4400; text-shadow:none; }
+    body.light .orbit-label.per { color:#1A7A3A; text-shadow:none; }
+    body.light .abort-bar { border-color:rgba(26,42,58,0.12); background:rgba(224,232,240,0.80); }
+  </style>
+</head>
+<body>
+<!-- Three.js 3D Globe -->
+<div id="globe-container"></div>
+<!-- Orbit point labels (projected from 3D) -->
+<div id="label-vehicle" class="orbit-label vehicle">Rocket</div>
+<div id="label-apo" class="orbit-label apo">Ap</div>
+<div id="label-per" class="orbit-label per">Pe</div>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-left">
+    <div><div class="station-id">FDO</div><div class="station-role">Flight Dynamics Officer</div></div>
+    <div style="margin-left:12px;padding-left:20px;border-left:1px solid var(--border)">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase">ORBITING</div>
+      <div id="hdr-body-large" style="font-size:22px;font-weight:700;color:var(--text-bright);letter-spacing:0.08em;text-transform:uppercase">---</div>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div class="meta-item"><span class="meta-label">Vehicle</span><span class="meta-value" id="hdr-vehicle">---</span></div>
+    <div class="meta-item" style="display:none"><span class="meta-label">Body</span><span class="meta-value" id="hdr-body">---</span></div>
+    <div class="meta-item"><span class="meta-label">Phase</span><span class="meta-value" id="hdr-phase">STANDBY</span></div>
+    <div class="meta-item"><span class="meta-label">GET</span><span class="meta-value" id="hdr-get">000:00:00</span></div>
+    <div id="hdr-mqtt" class="status-badge hold"><span class="status-dot"></span>HOLD</div>
+  </div>
+</div>
+<!-- Left Panels -->
+<div class="left-panels">
+  <div class="abort-bar" id="abort-panel">
+    <div><div style="font-size:11px;color:var(--text-secondary);letter-spacing:0.1em">ABORT AUTHORITY</div><div style="font-size:14px;font-weight:700;color:var(--nominal)" id="abort-state">SAFE</div></div>
+    <div style="text-align:right"><div style="font-size:11px;color:var(--text-secondary)">MODE</div><div style="font-size:14px;font-weight:600;color:var(--text-bright)" id="abort-mode">---</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Trajectory State</div>
+    <div id="traj-grid">
+      <div class="data-row"><span class="data-label">Velocity</span><span><span class="data-value" id="d-vel">---</span><span class="data-unit">m/s</span></span></div>
+      <div class="data-row"><span class="data-label">Altitude</span><span><span class="data-value" id="d-alt">---</span><span class="data-unit">km</span></span></div>
+      <div class="data-row"><span class="data-label">Heading</span><span><span class="data-value" id="d-hdg">---</span><span class="data-unit">°</span></span></div>
+      <div class="data-row"><span class="data-label">Pitch</span><span><span class="data-value" id="d-pitch">---</span><span class="data-unit">°</span></span></div>
+      <div class="data-row"><span class="data-label">Delta-V</span><span><span class="data-value" id="d-dv">---</span><span class="data-unit">m/s</span></span></div>
+      <div class="data-row"><span class="data-label">TWR</span><span class="data-value" id="d-twr">---</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Orbital Elements</div>
+    <div class="data-row"><span class="data-label">Apoapsis</span><span><span class="data-value" id="d-apo">---</span><span class="data-unit">km</span></span></div>
+    <div class="data-row"><span class="data-label">Periapsis</span><span><span class="data-value" id="d-per">---</span><span class="data-unit">km</span></span></div>
+    <div class="data-row"><span class="data-label">Eccentricity</span><span class="data-value" id="d-ecc">---</span></div>
+    <div class="data-row"><span class="data-label">Inclination</span><span><span class="data-value" id="d-inc">---</span><span class="data-unit">°</span></span></div>
+    <div class="data-row"><span class="data-label">Period</span><span><span class="data-value" id="d-period">---</span><span class="data-unit">min</span></span></div>
+    <div class="data-row"><span class="data-label">SMA</span><span><span class="data-value" id="d-sma">---</span><span class="data-unit">km</span></span></div>
+    <div class="data-row"><span class="data-label">LAN</span><span><span class="data-value" id="d-lan">---</span><span class="data-unit">°</span></span></div>
+    <div class="data-row"><span class="data-label">Arg of Pe</span><span><span class="data-value" id="d-aop">---</span><span class="data-unit">°</span></span></div>
+  </div>
+</div>
+<!-- Right Panels -->
+<div class="right-panels">
+  <div class="panel">
+    <div class="panel-title">Orbital Timing</div>
+    <div class="data-row"><span class="data-label">To Apoapsis</span><span class="data-value" id="d-tta">---</span></div>
+    <div class="data-row"><span class="data-label">To Periapsis</span><span class="data-value" id="d-ttp">---</span></div>
+    <div class="data-row"><span class="data-label">Orbit Type</span><span class="data-value" id="d-orbtype">---</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Maneuver Plan</div>
+    <div class="data-row"><span class="data-label">Burns</span><span class="data-value" id="d-burns">---</span></div>
+    <div class="data-row"><span class="data-label">Active Burn</span><span class="data-value" id="d-burning">---</span></div>
+    <div class="data-row"><span class="data-label">SOI Encounter</span><span class="data-value" id="d-encounter">---</span></div>
+    <div class="data-row"><span class="data-label">Flight Plan</span><span class="data-value" id="d-flightplan">---</span></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">State Vectors (CCI)</div>
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px">
+      <span style="color:var(--text-secondary)">Pos X</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums" id="sv-px">---</span>
+      <span style="color:var(--text-secondary)">Pos Y</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums" id="sv-py">---</span>
+      <span style="color:var(--text-secondary)">Pos Z</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums" id="sv-pz">---</span>
+      <span style="color:var(--text-secondary);margin-top:3px">Vel X</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums;margin-top:3px" id="sv-vx">---</span>
+      <span style="color:var(--text-secondary)">Vel Y</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums" id="sv-vy">---</span>
+      <span style="color:var(--text-secondary)">Vel Z</span><span style="text-align:right;color:var(--text-bright);font-variant-numeric:tabular-nums" id="sv-vz">---</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Trajectory History (60s)</div>
+    <div class="sparkline-row"><span class="sparkline-label">Velocity</span><canvas class="sparkline-canvas" id="spark-vel" height="20"></canvas><span class="sparkline-value" id="spark-vel-val">---</span></div>
+    <div class="sparkline-row"><span class="sparkline-label">Altitude</span><canvas class="sparkline-canvas" id="spark-alt" height="20"></canvas><span class="sparkline-value" id="spark-alt-val">---</span></div>
+    <div class="sparkline-row"><span class="sparkline-label">Apoapsis</span><canvas class="sparkline-canvas" id="spark-apo" height="20"></canvas><span class="sparkline-value" id="spark-apo-val">---</span></div>
+    <div class="sparkline-row"><span class="sparkline-label">Periapsis</span><canvas class="sparkline-canvas" id="spark-per" height="20"></canvas><span class="sparkline-value" id="spark-per-val">---</span></div>
+  </div>
+
+  <div class="panel" style="flex:1;min-height:0;display:flex;flex-direction:column">
+    <div class="panel-title">Event Log</div>
+    <div class="event-log" id="event-log"></div>
+  </div>
+</div>
+<!-- Footer -->
+<div class="footer">
+  <span>KSA-BRIDGE / MISSION CONTROL / FDO</span>
+  <div class="toggle-group">
+    <label class="toggle-switch"><input type="checkbox" id="toggle-track-ship"><span class="toggle-track"></span>Track Ship</label>
+    <label class="toggle-switch"><input type="checkbox" id="toggle-light-theme"><span class="toggle-track"></span>HAB Theme</label>
+  </div>
+  <span id="footer-topics">Topics: 0</span>
+  <div class="footer-leds"><div class="led" id="led-mqtt"></div><div class="led" id="led-data"></div></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// FDO CONSOLE — Three.js Holographic Globe + Live Telemetry
+// ═══════════════════════════════════════════════════════════════
+
+const RAD2DEG = 180 / Math.PI;
+const DEG2RAD = Math.PI / 180;
+const GLOBE_R = 6371; // visual scale: 1 unit = 1 km (not tied to any specific body)
+let orbitScale = 1;   // GLOBE_R / parentRadius_km — updated when parent body telemetry arrives
+const getStart = Date.now();
+// ── STATE ────────────────────────────────────────────────────
+const state = {
+  vehicleName:null, parentBody:null, situation:null, vehicleRegion:null,
+  altitude:null, altitudeKm:null, speed:null, orbitalSpeed:null,
+  heading:null, pitch:null, roll:null,
+  apoapsis:null, periapsis:null, apoEl:null, perEl:null,
+  eccentricity:null, inclination:null, period:null,
+  semiMajorAxis:null, semiMinorAxis:null,
+  lan:null, aop:null, parentRadius:null, parentMass:null,
+  orbitType:null, timeToApo:null, timeToPer:null,
+  deltaV:null, twr:null,
+  burnCount:null, hasActiveBurns:null, flightPlanComplete:null,
+  hasEncounter:null, closestApproachDist:null,
+  posX:null, posY:null, posZ:null, velX:null, velY:null, velZ:null,
+  // Parent body rotation (CCF→CCI quaternion)
+  bodyRotQx:0, bodyRotQy:0, bodyRotQz:0, bodyRotQw:1, axialTilt:0,
+  bodyName:null, bodyMeanRadius:null,
+  connected:false, topicCount:0, lastDataTime:0
+};
+// ── THEME COLOR MAPS (for Three.js scene) ───────────────────
+const darkScene = {
+  bg: 0x030508,
+  core: 0x050a18, coreOp: 0.6,
+  wire: 0x1a3a6a, wireOp: 0.12,
+  lat: 0x2255aa, latOp: 0.25,
+  eq: 0x3366cc, eqOp: 0.45,
+  lon: 0x2255aa, lonOp: 0.18,
+  coast: 0x4a9eff, coastOp: 0.45,
+  marsCertain: 0xD4883A, marsCertainOp: 0.55,
+  marsApprox: 0x8B5E2B, marsApproxOp: 0.35,
+  marsInternal: 0x5A8A7A, marsInternalOp: 0.40,
+  marsBorder: 0xFFAA44, marsBorderOp: 0.70,
+  jupBand: 0xC4956A, jupBandOp: 0.50,
+  jupHash: 0x8B6B4A, jupHashOp: 0.25,
+  jupStorm: 0xCC5533, jupStormOp: 0.65,
+  orbit: 0x4a9eff, orbitOp: 0.6,
+  ship: 0x4a9eff, apo: 0xe67e22, per: 0x2ecc71,
+  starOp: 0.7
+};
+const lightScene = {
+  bg: 0xE8EEF4,
+  core: 0xC8D4E0, coreOp: 0.7,
+  wire: 0x8098B0, wireOp: 0.10,
+  lat: 0x6080A0, latOp: 0.20,
+  eq: 0x4070A0, eqOp: 0.35,
+  lon: 0x6080A0, lonOp: 0.15,
+  coast: 0x0077BB, coastOp: 0.55,
+  marsCertain: 0xB06820, marsCertainOp: 0.60,
+  marsApprox: 0x7A4E1B, marsApproxOp: 0.40,
+  marsInternal: 0x4A7A6A, marsInternalOp: 0.45,
+  marsBorder: 0xDD8822, marsBorderOp: 0.75,
+  jupBand: 0xA07850, jupBandOp: 0.55,
+  jupHash: 0x7A5A3A, jupHashOp: 0.30,
+  jupStorm: 0xAA4422, jupStormOp: 0.70,
+  orbit: 0x0077BB, orbitOp: 0.7,
+  ship: 0x0077BB, apo: 0xCC4400, per: 0x1A7A3A,
+  starOp: 0.15
+};
+let currentThemeColors = darkScene;
+
+const SPARK_LEN = 120;
+const sparkData = { vel:[], alt:[], apo:[], per:[] };
+const events = [];
+function logEvent(msg) { events.push({time:formatGET(),msg}); if(events.length>50)events.shift(); }
+// ── THREE.JS SCENE ───────────────────────────────────────────
+const container = document.getElementById('globe-container');
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+container.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x030508);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 10, 200000);
+camera.position.set(0, 4000, 16000);
+camera.lookAt(0, 0, 0);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ── CAMERA CONTROLS (zoom + drag rotate) ─────────────────────
+let camDist = 20000, camTheta = 0, camPhi = 0.35; // spherical coords
+let isDragging = false, lastMX = 0, lastMY = 0;
+let cameraInitialized = false; // will reposition once we get telemetry
+let trackShip = false; // toggle: keep camera centered on ship
+
+function updateCamera() {
+  // Spherical offset from the look-at target
+  const ox = camDist * Math.sin(camTheta) * Math.cos(camPhi);
+  const oy = camDist * Math.sin(camPhi);
+  const oz = camDist * Math.cos(camTheta) * Math.cos(camPhi);
+
+  if (trackShip && state.posX != null) {
+    // Ship position in Three.js coords
+    const sx = (state.posX / 1000) * orbitScale;
+    const sy = (state.posZ / 1000) * orbitScale;
+    const sz = (-state.posY / 1000) * orbitScale;
+    // Camera orbits around midpoint between ship and planet center,
+    // keeping both in view while tracking the ship's motion
+    const lookX = sx * 0.5;
+    const lookY = sy * 0.5;
+    const lookZ = sz * 0.5;
+    camera.position.set(lookX + ox, lookY + oy, lookZ + oz);
+    camera.lookAt(lookX, lookY, lookZ);
+  } else {
+    camera.position.set(ox, oy, oz);
+    camera.lookAt(0, 0, 0);
+  }
+}
+
+// Focus camera on ship once we have orbit + position data
+function initCameraOnShip() {
+  if (cameraInitialized) return;
+  if (state.apoapsis == null || state.posX == null) return;
+  cameraInitialized = true;
+
+  // Set distance to show full orbit with margin
+  const orbitRadiusKm = state.apoapsis / 1000;
+  camDist = orbitRadiusKm * 3.2;
+  camDist = Math.max(12000, Math.min(60000, camDist));
+
+  // Point camera toward the ship position
+  // Ship in Three.js coords: (CCI_x, CCI_z, -CCI_y) / 1000
+  const sx = state.posX / 1000;
+  const sy = state.posZ / 1000;
+  const sz = -state.posY / 1000;
+  // Convert ship position to spherical angles
+  const shipDist = Math.sqrt(sx*sx + sy*sy + sz*sz);
+  if (shipDist > 0) {
+    camPhi = Math.asin(sy / shipDist);
+    camTheta = Math.atan2(sx, sz);
+  }
+  updateCamera();
+}
+updateCamera();
+
+renderer.domElement.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  camDist *= e.deltaY > 0 ? 1.08 : 0.92;
+  camDist = Math.max(7500, Math.min(60000, camDist));
+  updateCamera();
+}, { passive: false });
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  isDragging = true; lastMX = e.clientX; lastMY = e.clientY;
+  renderer.domElement.style.cursor = 'grabbing';
+});
+window.addEventListener('mouseup', () => {
+  isDragging = false;
+  renderer.domElement.style.cursor = 'grab';
+});
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  camTheta -= (e.clientX - lastMX) * 0.003;
+  camPhi += (e.clientY - lastMY) * 0.003;
+  camPhi = Math.max(-1.2, Math.min(1.2, camPhi));
+  lastMX = e.clientX; lastMY = e.clientY;
+  updateCamera();
+});
+renderer.domElement.style.cursor = 'grab';
+// ── STARFIELD ────────────────────────────────────────────────
+(function createStars() {
+  const N = 6000;
+  const pos = new Float32Array(N * 3);
+  const col = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    const r = 90000;
+    pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+    pos[i*3+2] = r * Math.cos(phi);
+    const t = 0.7 + Math.random() * 0.3;
+    col[i*3] = t; col[i*3+1] = t; col[i*3+2] = 0.85 + Math.random() * 0.15;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({
+    size: 30, vertexColors:true, transparent:true, opacity:0.7, sizeAttenuation:true, depthWrite:false
+  })));
+})();
+// ── HOLOGRAPHIC GLOBE ────────────────────────────────────────
+const earthGroup = new THREE.Group();
+scene.add(earthGroup);
+
+// Solid dark sphere (core)
+const coreMat = new THREE.MeshBasicMaterial({ color:0x050a18, transparent:true, opacity:0.6 });
+const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R * 0.995, 64, 64), coreMat);
+earthGroup.add(coreMesh);
+
+// Wireframe sphere (holographic shell)
+const wireMat = new THREE.MeshBasicMaterial({ color:0x1a3a6a, wireframe:true, transparent:true, opacity:0.12 });
+const wireMesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_R, 48, 48), wireMat);
+earthGroup.add(wireMesh);
+
+// Latitude lines (every 30°)
+const latLineMat = new THREE.LineBasicMaterial({ color:0x2255aa, transparent:true, opacity:0.25 });
+for (let lat = -60; lat <= 60; lat += 30) {
+  if (lat === 0) continue; // equator drawn separately
+  const r = GLOBE_R * Math.cos(lat * DEG2RAD);
+  const y = GLOBE_R * Math.sin(lat * DEG2RAD);
+  const pts = [];
+  for (let i = 0; i <= 128; i++) {
+    const a = (i / 128) * Math.PI * 2;
+    pts.push(new THREE.Vector3(r * Math.cos(a), y, r * Math.sin(a)));
+  }
+  earthGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), latLineMat));
+}
+
+// Equator (brighter)
+const eqPts = [];
+for (let i = 0; i <= 128; i++) {
+  const a = (i / 128) * Math.PI * 2;
+  eqPts.push(new THREE.Vector3(GLOBE_R * Math.cos(a), 0, GLOBE_R * Math.sin(a)));
+}
+earthGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(eqPts),
+  new THREE.LineBasicMaterial({ color:0x3366cc, transparent:true, opacity:0.45 })));
+// Longitude lines (every 30°)
+const lonLineMat = new THREE.LineBasicMaterial({ color:0x2255aa, transparent:true, opacity:0.18 });
+for (let lon = 0; lon < 360; lon += 30) {
+  const pts = [];
+  for (let i = 0; i <= 128; i++) {
+    const lat = (i / 128) * Math.PI - Math.PI / 2;
+    const x = GLOBE_R * Math.cos(lat) * Math.cos(lon * DEG2RAD);
+    const y = GLOBE_R * Math.sin(lat);
+    const z = GLOBE_R * Math.cos(lat) * Math.sin(lon * DEG2RAD);
+    pts.push(new THREE.Vector3(x, y, z));
+  }
+  earthGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lonLineMat));
+}
+
+// Atmosphere glow (Fresnel rim)
+const atmoVert = `
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vPosition = (modelViewMatrix * vec4(position,1.0)).xyz;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+  }`;
+const atmoFrag = `
+  uniform vec3 uAtmoInner;
+  uniform vec3 uAtmoOuter;
+  varying vec3 vNormal;
+  varying vec3 vPosition;
+  void main() {
+    vec3 viewDir = normalize(-vPosition);
+    float rim = 1.0 - dot(vNormal, viewDir);
+    float intensity = pow(rim, 3.5) * 1.4;
+    vec3 col = mix(uAtmoInner, uAtmoOuter, rim);
+    gl_FragColor = vec4(col, intensity * 0.5);
+  }`;
+const atmoMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(GLOBE_R + 100, 64, 64),
+  new THREE.ShaderMaterial({
+    vertexShader:atmoVert, fragmentShader:atmoFrag, transparent:true,
+    side:THREE.BackSide, depthWrite:false, blending:THREE.AdditiveBlending,
+    uniforms: {
+      uAtmoInner: { value: new THREE.Vector3(0.2, 0.5, 1.0) },
+      uAtmoOuter: { value: new THREE.Vector3(0.1, 0.8, 1.0) }
+    }
+  })
+);
+earthGroup.add(atmoMesh);
+
+// Per-body atmosphere colors [inner, outer] as RGB 0-1
+const bodyAtmoColors = {
+  'Earth':   { inner: [0.2, 0.5, 1.0],  outer: [0.1, 0.8, 1.0]  },
+  'Mars':    { inner: [0.8, 0.35, 0.1],  outer: [1.0, 0.5, 0.15] },
+  'Moon':    { inner: [0.5, 0.5, 0.55],  outer: [0.4, 0.4, 0.45] },
+  'Mercury': { inner: [0.5, 0.45, 0.4],  outer: [0.45, 0.4, 0.35] },
+  'Venus':   { inner: [0.9, 0.7, 0.3],   outer: [1.0, 0.85, 0.4] },
+  'Jupiter': { inner: [0.7, 0.55, 0.3],  outer: [0.85, 0.65, 0.35] },
+  'default': { inner: [0.3, 0.5, 0.8],   outer: [0.2, 0.6, 0.9]  }
+};
+function setAtmosphereForBody(bodyName) {
+  const colors = bodyAtmoColors[bodyName] || bodyAtmoColors['default'];
+  const mat = atmoMesh.material;
+  mat.uniforms.uAtmoInner.value.set(colors.inner[0], colors.inner[1], colors.inner[2]);
+  mat.uniforms.uAtmoOuter.value.set(colors.outer[0], colors.outer[1], colors.outer[2]);
+}
+
+// ── SURFACE FEATURE DATA ────────────────────────────────────
+// Dynamic loading of surface outlines per body (coastlines for Earth, mare/craters for others)
+// Data files served from the HTTP server's data/ directory
+const coastlineMat = new THREE.LineBasicMaterial({
+  color: currentThemeColors.coast, transparent: true, opacity: currentThemeColors.coastOp, depthWrite: false
+});
+const craterMat = new THREE.LineBasicMaterial({
+  color: currentThemeColors.coast, transparent: true, opacity: currentThemeColors.coastOp * 0.6, depthWrite: false
+});
+// Mars geologic contact materials (by ConType)
+const marsContactMats = {
+  Certain:  new THREE.LineBasicMaterial({ color: currentThemeColors.marsCertain,  transparent: true, opacity: currentThemeColors.marsCertainOp,  depthWrite: false }),
+  Approx:   new THREE.LineBasicMaterial({ color: currentThemeColors.marsApprox,   transparent: true, opacity: currentThemeColors.marsApproxOp,   depthWrite: false }),
+  Internal: new THREE.LineBasicMaterial({ color: currentThemeColors.marsInternal, transparent: true, opacity: currentThemeColors.marsInternalOp, depthWrite: false }),
+  Border:   new THREE.LineBasicMaterial({ color: currentThemeColors.marsBorder,   transparent: true, opacity: currentThemeColors.marsBorderOp,   depthWrite: false })
+};
+// Jupiter band materials (by feature type)
+const jupiterMats = {
+  boundary: new THREE.LineBasicMaterial({ color: currentThemeColors.jupBand,  transparent: true, opacity: currentThemeColors.jupBandOp,  depthWrite: false }),
+  belt_hash: new THREE.LineBasicMaterial({ color: currentThemeColors.jupHash,  transparent: true, opacity: currentThemeColors.jupHashOp,  depthWrite: false }),
+  storm:    new THREE.LineBasicMaterial({ color: currentThemeColors.jupStorm, transparent: true, opacity: currentThemeColors.jupStormOp, depthWrite: false }),
+  equator:      new THREE.LineBasicMaterial({ color: currentThemeColors.jupBand,  transparent: true, opacity: currentThemeColors.jupBandOp,  depthWrite: false }),
+  storm_detail: new THREE.LineBasicMaterial({ color: currentThemeColors.jupStorm, transparent: true, opacity: currentThemeColors.jupStormOp * 0.6, depthWrite: false })
+};
+
+function latLonToVec3(lat, lon, r) {
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+     r * Math.cos(phi),
+     r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+// Track surface feature meshes so we can remove them on body change
+let surfaceFeatures = [];
+
+function clearSurfaceFeatures() {
+  surfaceFeatures.forEach(obj => {
+    earthGroup.remove(obj);
+    if (obj.geometry) obj.geometry.dispose();
+  });
+  surfaceFeatures = [];
+}
+
+// Render GeoJSON/TopoJSON polygons and lines onto the globe
+function renderFeatures(geojson, material, radius) {
+  const features = geojson.type === 'FeatureCollection' ? geojson.features :
+                   geojson.type === 'Feature' ? [geojson] : [];
+  // Also handle bare geometry (from topojson.feature with a single geometry)
+  const geoms = features.length > 0 ? features :
+                (geojson.type === 'GeometryCollection' ? geojson.geometries.map(g => ({geometry:g})) : []);
+
+  geoms.forEach(feature => {
+    const geom = feature.geometry;
+    if (!geom) return;
+    let coordSets = [];
+    if (geom.type === 'Polygon') {
+      coordSets = geom.coordinates;
+    } else if (geom.type === 'MultiPolygon') {
+      geom.coordinates.forEach(poly => coordSets.push(...poly));
+    } else if (geom.type === 'LineString') {
+      coordSets = [geom.coordinates];
+    } else if (geom.type === 'MultiLineString') {
+      coordSets = geom.coordinates;
+    }
+    coordSets.forEach(ring => {
+      if (ring.length < 2) return;
+      const pts = ring.map(c => latLonToVec3(c[1], c[0], radius));
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const line = new THREE.Line(geo, material);
+      earthGroup.add(line);
+      surfaceFeatures.push(line);
+    });
+  });
+}
+
+// Body data configuration: what files to load for each body
+const bodyDataConfig = {
+  'Earth': {
+    outlines: { url: 'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json', type: 'topojson', objectKey: 'land' }
+  },
+  'Moon': {
+    outlines: { url: 'data/moon_mare.topojson', type: 'topojson' },
+    craters: { url: 'data/moon_craters.topojson', type: 'topojson' },
+    labels:  { url: 'data/moon_labels.json', type: 'labels' }
+  },
+  'Mars': {
+    outlines: { url: 'data/mars_contacts.geojson', type: 'geojson' },
+    labels:  { url: 'data/mars_labels.json', type: 'labels' }
+  },
+  'Mercury': {
+    craters: { url: 'data/mercury_craters.topojson', type: 'topojson' },
+    labels:  { url: 'data/mercury_labels.json', type: 'labels' }
+  },
+  'Venus': {
+    craters: { url: 'data/venus_craters.topojson', type: 'topojson' },
+    labels:  { url: 'data/venus_labels.json', type: 'labels' }
+  },
+  'Jupiter': {
+    outlines: { url: 'data/jupiter_bands.geojson', type: 'geojson' },
+    labels:   { url: 'data/jupiter_labels.json', type: 'labels' }
+  }
+};
+
+let currentBodyName = null;
+let topojsonLoaded = false;
+
+function ensureTopojsonClient() {
+  return new Promise((resolve) => {
+    if (topojsonLoaded || typeof topojson !== 'undefined') {
+      topojsonLoaded = true;
+      resolve();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js';
+    script.onload = () => { topojsonLoaded = true; resolve(); };
+    script.onerror = () => { console.warn('[FDO] Failed to load topojson client'); resolve(); };
+    document.head.appendChild(script);
+  });
+}
+
+async function loadBodyData(bodyName) {
+  if (bodyName === currentBodyName && surfaceFeatures.length > 0) return;
+  currentBodyName = bodyName;
+  clearSurfaceFeatures();
+  logEvent('BODY: ' + bodyName);
+  setAtmosphereForBody(bodyName);
+
+  const config = bodyDataConfig[bodyName];
+  if (!config) {
+    console.warn('[FDO] No surface data configured for body:', bodyName);
+    return;
+  }
+
+  try {
+    await ensureTopojsonClient();
+    if (typeof topojson === 'undefined') {
+      console.warn('[FDO] topojson client not available, cannot render surface data');
+      currentBodyName = null; // allow retry
+      return;
+    }
+  } catch(e) {
+    console.warn('[FDO] Failed to load topojson client', e);
+    currentBodyName = null; // allow retry
+    return;
+  }
+
+  let loaded = false;
+
+  // Load outline data (coastlines/mare boundaries)
+  if (config.outlines) {
+    try {
+      const resp = await fetch(config.outlines.url);
+      const data = await resp.json();
+      if (config.outlines.type === 'topojson') {
+        const objectKey = config.outlines.objectKey || Object.keys(data.objects)[0];
+        const geojson = topojson.feature(data, data.objects[objectKey]);
+        renderFeatures(geojson, coastlineMat, GLOBE_R * 1.001);
+        loaded = true;
+      } else {
+        // Check if data has typed features (Mars ConType or Jupiter band types)
+        const hasConType = data.features && data.features.some(f => f.properties && f.properties.ConType);
+        const hasJupType = data.features && data.features.some(f => f.properties && f.properties.type && ['boundary','belt_hash','storm','storm_detail','equator'].includes(f.properties.type));
+        if (hasJupType) {
+          // Jupiter: render each feature type with its own material
+          ['boundary','belt_hash','storm','storm_detail','equator'].forEach(ftype => {
+            const subset = { type: 'FeatureCollection', features: data.features.filter(f => f.properties && f.properties.type === ftype) };
+            if (subset.features.length > 0) {
+              renderFeatures(subset, jupiterMats[ftype] || coastlineMat, GLOBE_R * 1.001);
+            }
+          });
+          loaded = true;
+        } else if (hasConType) {
+          // Render each ConType with its own material
+          Object.keys(marsContactMats).forEach(conType => {
+            const subset = { type: 'FeatureCollection', features: data.features.filter(f => f.properties && f.properties.ConType === conType) };
+            if (subset.features.length > 0) {
+              renderFeatures(subset, marsContactMats[conType], GLOBE_R * 1.001);
+            }
+          });
+          // Any features with unknown ConType get default coastline material
+          const unknown = { type: 'FeatureCollection', features: data.features.filter(f => !f.properties || !f.properties.ConType || !marsContactMats[f.properties.ConType]) };
+          if (unknown.features.length > 0) {
+            renderFeatures(unknown, coastlineMat, GLOBE_R * 1.001);
+          }
+        } else {
+          renderFeatures(data, coastlineMat, GLOBE_R * 1.001);
+        }
+        loaded = true;
+      }
+    } catch(e) { console.warn('[FDO] Failed to load outlines for', bodyName, e); }
+  }
+
+  // Load crater/feature ring data
+  if (config.craters) {
+    try {
+      const resp = await fetch(config.craters.url);
+      const data = await resp.json();
+      if (config.craters.type === 'topojson') {
+        const objectKey = Object.keys(data.objects)[0];
+        const geojson = topojson.feature(data, data.objects[objectKey]);
+        renderFeatures(geojson, craterMat, GLOBE_R * 1.001);
+        loaded = true;
+      } else {
+        renderFeatures(data, craterMat, GLOBE_R * 1.001);
+        loaded = true;
+      }
+    } catch(e) { console.warn('[FDO] Failed to load craters for', bodyName, e); }
+  }
+
+  // Load named feature labels
+  if (config.labels) {
+    try {
+      const resp = await fetch(config.labels.url);
+      const labels = await resp.json();
+      state.bodyLabels = labels;
+    } catch(e) { console.warn('[FDO] Failed to load labels for', bodyName, e); }
+  }
+
+  // If nothing loaded, allow retry on next message
+  if (!loaded) currentBodyName = null;
+}
+
+// Default: load Earth data on startup
+loadBodyData('Earth');
+
+// ── 3D ORBIT OBJECTS ────────────────────────────────────────
+let orbitLine = null;       // THREE.Line for the orbit ellipse
+let shipMarker = null;      // mesh for ship position
+let apoMarker = null;       // mesh for apoapsis
+let perMarker = null;       // mesh for periapsis
+const markerGeo = new THREE.SphereGeometry(60, 12, 12);
+
+function createMarker(color) {
+  const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.9 });
+  const m = new THREE.Mesh(markerGeo, mat);
+  m.visible = false;
+  scene.add(m);
+  return m;
+}
+shipMarker = createMarker(0x4a9eff);
+apoMarker  = createMarker(0xe67e22);
+perMarker  = createMarker(0x2ecc71);
+
+// ── ORBIT RENDERING ─────────────────────────────────────────
+function updateOrbit3D() {
+  if (state.semiMajorAxis == null || state.eccentricity == null) return;
+  if (state.inclination == null || state.lan == null || state.aop == null) return;
+
+  // Orbital elements scaled to globe (orbitScale = GLOBE_R / parentRadius_km)
+  const a = (state.semiMajorAxis / 1000) * orbitScale;   // semi-major axis (globe units)
+  const e = state.eccentricity;
+  const b = a * Math.sqrt(1 - e * e);     // semi-minor axis (globe units)
+
+  const incRad = state.inclination;                    // already radians from KSA
+  const lanRad = state.longitudeOfAscendingNode || state.lan;  // radians
+  const aopRad = state.argumentOfPeriapsis || state.aop;       // radians
+
+  // Build orbital plane rotation: CCI R_z(LAN)·R_x(Inc)·R_z(AoP)
+  // In Three.js Y-up: R_y(LAN)·R_x(Inc)·R_y(AoP) — SAME angles, no negation
+  const mLan = new THREE.Matrix4().makeRotationY(lanRad);
+  const mInc = new THREE.Matrix4().makeRotationX(incRad);
+  const mAop = new THREE.Matrix4().makeRotationY(aopRad);
+  const orbitMatrix = new THREE.Matrix4().multiplyMatrices(mLan, mInc);
+  orbitMatrix.multiply(mAop);
+
+  // Generate ellipse points in perifocal frame (periapsis at +X)
+  const N = 256;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const theta = (i / N) * Math.PI * 2;
+    // Perifocal: X toward periapsis, Z is orbit normal → Three.js X toward pe, Y is normal
+    const x = a * Math.cos(theta) - a * e;  // shift focus to origin
+    const z = b * Math.sin(theta);
+    const v = new THREE.Vector3(x, 0, z);
+    v.applyMatrix4(orbitMatrix);
+    pts.push(v);
+  }
+
+  // Update or create orbit line
+  if (orbitLine) scene.remove(orbitLine);
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  orbitLine = new THREE.Line(geo, new THREE.LineBasicMaterial({
+    color: currentThemeColors.orbit, transparent:true, opacity: currentThemeColors.orbitOp
+  }));
+  scene.add(orbitLine);
+
+  // Periapsis marker: theta=0 in perifocal
+  const perPt = new THREE.Vector3(a * (1 - e), 0, 0);
+  perPt.applyMatrix4(orbitMatrix);
+  perMarker.position.copy(perPt);
+  perMarker.visible = true;
+
+  // Apoapsis marker: theta=PI in perifocal
+  const apoPt = new THREE.Vector3(-a * (1 + e), 0, 0);
+  apoPt.applyMatrix4(orbitMatrix);
+  apoMarker.position.copy(apoPt);
+  apoMarker.visible = true;
+
+  // Ship marker: use CCI state vectors (direct, not via Keplerian)
+  if (state.posX != null) {
+    // CCI (Z-up) → Three.js (Y-up): x→x, z→y, -y→z
+    const sx = (state.posX / 1000) * orbitScale;
+    const sy = (state.posZ / 1000) * orbitScale;
+    const sz = (-state.posY / 1000) * orbitScale;
+    shipMarker.position.set(sx, sy, sz);
+    shipMarker.visible = true;
+  }
+}
+
+// ── LABEL PROJECTION ────────────────────────────────────────
+const labelEls = {
+  vehicle: document.getElementById('label-vehicle'),
+  apo: document.getElementById('label-apo'),
+  per: document.getElementById('label-per')
+};
+
+function projectLabel(el, marker) {
+  if (!marker || !marker.visible) { el.style.display = 'none'; return; }
+  const v = marker.position.clone().project(camera);
+  if (v.z > 1) { el.style.display = 'none'; return; }
+  const hw = window.innerWidth / 2;
+  const hh = window.innerHeight / 2;
+  el.style.left = (v.x * hw + hw + 12) + 'px';
+  el.style.top  = (-v.y * hh + hh - 8) + 'px';
+  el.style.display = 'block';
+}
+
+function updateLabelProjections() {
+  projectLabel(labelEls.vehicle, shipMarker);
+  projectLabel(labelEls.apo, apoMarker);
+  projectLabel(labelEls.per, perMarker);
+}
+
+// ── MQTT CONNECTION ─────────────────────────────────────────
+const client = mqtt.connect('ws://appserv1.local:9002');
+
+client.on('connect', () => {
+  console.log('[FDO] Connected to KSA-Bridge MQTT broker');
+  state.connected = true;
+  logEvent('MQTT LINK ESTABLISHED — TELEMETRY NOM');
+  document.getElementById('hdr-mqtt').className = 'status-badge nom';
+  document.getElementById('hdr-mqtt').innerHTML = '<span class="status-dot"></span>NOM';
+  client.subscribe('ksp/telemetry/#');
+  client.subscribe('ksp/telemetry/_bridge/status');
+});
+
+client.on('close', () => {
+  state.connected = false;
+  document.getElementById('hdr-mqtt').className = 'status-badge hold';
+  document.getElementById('hdr-mqtt').innerHTML = '<span class="status-dot"></span>HOLD';
+});
+
+client.on('message', (topic, payload) => {
+  try {
+    const d = JSON.parse(payload.toString());
+    state.lastDataTime = Date.now();
+    state.topicCount++;
+
+    switch(topic) {
+      case 'ksp/telemetry/vehicle':
+        if (d.vehicleName != null) state.vehicleName = d.vehicleName;
+        if (d.parentBody != null) state.parentBody = d.parentBody;
+        if (d.situation != null) state.situation = d.situation;
+        if (d.vehicleRegion != null) state.vehicleRegion = d.vehicleRegion;
+        if (d.speed != null) state.orbitalSpeed = d.speed;
+        break;
+
+      case 'ksp/telemetry/navigation':
+        if (d.altitude != null) state.altitude = d.altitude;
+        if (d.altitudeKm != null) state.altitudeKm = d.altitudeKm;
+        if (d.speed != null) state.speed = d.speed;
+        if (d.orbitalSpeed != null) state.orbitalSpeed = d.orbitalSpeed;
+        break;
+
+      case 'ksp/telemetry/orbit':
+        if (d.apoapsisElevation != null) state.apoEl = d.apoapsisElevation;
+        if (d.periapsisElevation != null) state.perEl = d.periapsisElevation;
+        if (d.apoapsis != null) state.apoapsis = d.apoapsis;
+        if (d.periapsis != null) state.periapsis = d.periapsis;
+        if (d.eccentricity != null) state.eccentricity = d.eccentricity;
+        if (d.inclination != null) state.inclination = d.inclination;
+        if (d.period != null) state.period = d.period;
+        if (d.semiMajorAxis != null) state.semiMajorAxis = d.semiMajorAxis;
+        if (d.semiMinorAxis != null) state.semiMinorAxis = d.semiMinorAxis;
+        if (d.longitudeOfAscendingNode != null) state.lan = d.longitudeOfAscendingNode;
+        if (d.argumentOfPeriapsis != null) state.aop = d.argumentOfPeriapsis;
+        if (d.parentRadius != null) {
+          state.parentRadius = d.parentRadius;
+          orbitScale = GLOBE_R / (d.parentRadius / 1000);  // update globe scaling
+        }
+        if (d.parentMass != null) state.parentMass = d.parentMass;
+        if (d.orbitType != null) state.orbitType = d.orbitType;
+        if (d.timeToApoapsis != null) state.timeToApo = d.timeToApoapsis;
+        if (d.timeToPeriapsis != null) state.timeToPer = d.timeToPeriapsis;
+        break;
+
+      case 'ksp/telemetry/attitude':
+        if (d.heading != null) state.heading = d.heading;
+        if (d.pitch != null) state.pitch = d.pitch;
+        if (d.roll != null) state.roll = d.roll;
+        break;
+
+      case 'ksp/telemetry/state_vectors':
+        if (d.positionX != null) state.posX = d.positionX;
+        if (d.positionY != null) state.posY = d.positionY;
+        if (d.positionZ != null) state.posZ = d.positionZ;
+        if (d.velocityX != null) state.velX = d.velocityX;
+        if (d.velocityY != null) state.velY = d.velocityY;
+        if (d.velocityZ != null) state.velZ = d.velocityZ;
+        break;
+
+      case 'ksp/telemetry/maneuver':
+        if (d.burnCount != null) state.burnCount = d.burnCount;
+        if (d.hasActiveBurns != null) state.hasActiveBurns = d.hasActiveBurns;
+        if (d.flightPlanComplete != null) state.flightPlanComplete = d.flightPlanComplete;
+        break;
+
+      case 'ksp/telemetry/encounter':
+        if (d.hasEncounter != null) state.hasEncounter = d.hasEncounter;
+        if (d.closestApproachDistance != null) state.closestApproachDist = d.closestApproachDistance;
+        break;
+
+      case 'ksp/telemetry/parent_body':
+        if (d.rotationQuatX != null) state.bodyRotQx = d.rotationQuatX;
+        if (d.rotationQuatY != null) state.bodyRotQy = d.rotationQuatY;
+        if (d.rotationQuatZ != null) state.bodyRotQz = d.rotationQuatZ;
+        if (d.rotationQuatW != null) state.bodyRotQw = d.rotationQuatW;
+        if (d.axialTilt != null) state.axialTilt = d.axialTilt;
+        const bName = d.bodyName || d.parentId;
+        if (bName != null) {
+          state.bodyName = bName;
+          loadBodyData(bName);
+        }
+        if (d.meanRadius != null) state.bodyMeanRadius = d.meanRadius;
+        break;
+    }
+  } catch(err) {
+    console.warn('[FDO] Parse error on', topic, err);
+  }
+});
+
+// ── HELPERS ─────────────────────────────────────────────────
+function formatGET() {
+  const ms = Date.now() - getStart;
+  const s = Math.floor(ms / 1000) % 60;
+  const m = Math.floor(ms / 60000) % 60;
+  const h = Math.floor(ms / 3600000);
+  return String(h).padStart(3,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function formatSeconds(sec) {
+  if (sec == null || isNaN(sec)) return '---';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  if (h > 0) return h + 'h ' + String(m).padStart(2,'0') + 'm';
+  return m + 'm ' + String(s).padStart(2,'0') + 's';
+}
+
+function drawSparkline(canvasId, data, min, max) {
+  const el = document.getElementById(canvasId);
+  if (!el) return;
+  const ctx = el.getContext('2d');
+  const w = el.width = el.offsetWidth;
+  const h = el.height;
+  ctx.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+  const range = max - min || 1;
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(74,158,255,0.6)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < data.length; i++) {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((data[i] - min) / range) * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+// ── DOM UPDATE ──────────────────────────────────────────────
+function updateDOM() {
+  // Header
+  const get = formatGET();
+  document.getElementById('hdr-get').textContent = get;
+  if (state.vehicleName) document.getElementById('hdr-vehicle').textContent = state.vehicleName;
+  if (state.parentBody) { document.getElementById('hdr-body').textContent = state.parentBody; document.getElementById('hdr-body-large').textContent = state.parentBody; }
+  if (state.situation) document.getElementById('hdr-phase').textContent = state.situation.toUpperCase();
+
+  // Trajectory
+  const sv = (id, v, dec) => { const el = document.getElementById(id); if (el && v != null) el.textContent = typeof v === 'number' ? v.toFixed(dec != null ? dec : 1) : v; };
+  sv('d-vel', state.speed, 1);
+  sv('d-alt', state.altitudeKm, 1);
+  sv('d-hdg', state.heading != null ? (state.heading * RAD2DEG) : null, 1);
+  sv('d-pitch', state.pitch != null ? (state.pitch * RAD2DEG) : null, 1);
+  sv('d-dv', state.deltaV, 0);
+  sv('d-twr', state.twr, 2);
+
+  // Orbital elements (elevations in km)
+  sv('d-apo', state.apoEl != null ? state.apoEl / 1000 : null, 1);
+  sv('d-per', state.perEl != null ? state.perEl / 1000 : null, 1);
+  sv('d-ecc', state.eccentricity, 5);
+  sv('d-inc', state.inclination != null ? (state.inclination * RAD2DEG) : null, 2);
+  sv('d-period', state.period != null ? (state.period / 60) : null, 1);
+  sv('d-sma', state.semiMajorAxis != null ? state.semiMajorAxis / 1000 : null, 0);
+  sv('d-lan', state.lan != null ? (state.lan * RAD2DEG) : null, 2);
+  sv('d-aop', state.aop != null ? (state.aop * RAD2DEG) : null, 2);
+
+  // Timing — highlight based on urgency
+  const ttaEl = document.getElementById('d-tta');
+  const ttpEl = document.getElementById('d-ttp');
+  ttaEl.textContent = formatSeconds(state.timeToApo);
+  ttpEl.textContent = formatSeconds(state.timeToPer);
+  sv('d-orbtype', state.orbitType);
+
+  // Apply urgency classes to timing rows
+  const setUrgency = (el, seconds) => {
+    const row = el.closest('.data-row');
+    if (!row) return;
+    row.classList.remove('urgent', 'alert');
+    if (seconds != null && seconds < 30) row.classList.add('alert');
+    else if (seconds != null && seconds < 120) row.classList.add('urgent');
+  };
+  setUrgency(ttaEl, state.timeToApo);
+  setUrgency(ttpEl, state.timeToPer);
+
+  // Maneuver — highlight active burn
+  sv('d-burns', state.burnCount, 0);
+  const burningVal = state.hasActiveBurns != null ? (state.hasActiveBurns ? 'YES' : 'No') : null;
+  sv('d-burning', burningVal);
+  const burningEl = document.getElementById('d-burning');
+  if (burningEl) {
+    const row = burningEl.closest('.data-row');
+    if (row) { row.classList.toggle('active', state.hasActiveBurns === true); row.classList.toggle('alert', false); }
+  }
+  sv('d-encounter', state.hasEncounter != null ? (state.hasEncounter ? 'YES' : 'None') : null);
+  sv('d-flightplan', state.flightPlanComplete != null ? (state.flightPlanComplete ? 'Complete' : 'Active') : null);
+
+  // State vectors
+  sv('sv-px', state.posX, 0);
+  sv('sv-py', state.posY, 0);
+  sv('sv-pz', state.posZ, 0);
+  sv('sv-vx', state.velX, 1);
+  sv('sv-vy', state.velY, 1);
+  sv('sv-vz', state.velZ, 1);
+
+  // Footer
+  document.getElementById('footer-topics').textContent = 'Topics: ' + state.topicCount;
+  const ledMqtt = document.getElementById('led-mqtt');
+  const ledData = document.getElementById('led-data');
+  if (ledMqtt) ledMqtt.style.background = state.connected ? 'var(--nominal)' : 'var(--alarm)';
+  if (ledData) ledData.style.background = (Date.now() - state.lastDataTime < 2000) ? 'var(--nominal)' : 'var(--text-dim)';
+
+  // Sparklines
+  if (state.speed != null) { sparkData.vel.push(state.speed); if (sparkData.vel.length > SPARK_LEN) sparkData.vel.shift(); }
+  if (state.altitudeKm != null) { sparkData.alt.push(state.altitudeKm); if (sparkData.alt.length > SPARK_LEN) sparkData.alt.shift(); }
+  if (state.apoEl != null) { sparkData.apo.push(state.apoEl/1000); if (sparkData.apo.length > SPARK_LEN) sparkData.apo.shift(); }
+  if (state.perEl != null) { sparkData.per.push(state.perEl/1000); if (sparkData.per.length > SPARK_LEN) sparkData.per.shift(); }
+
+  const sMinMax = (arr) => { let mn=Infinity, mx=-Infinity; arr.forEach(v=>{if(v<mn)mn=v;if(v>mx)mx=v;}); return [mn,mx]; };
+  if (sparkData.vel.length > 1) { const [mn,mx] = sMinMax(sparkData.vel); drawSparkline('spark-vel', sparkData.vel, mn, mx); document.getElementById('spark-vel-val').textContent = sparkData.vel[sparkData.vel.length-1].toFixed(0); }
+  if (sparkData.alt.length > 1) { const [mn,mx] = sMinMax(sparkData.alt); drawSparkline('spark-alt', sparkData.alt, mn, mx); document.getElementById('spark-alt-val').textContent = sparkData.alt[sparkData.alt.length-1].toFixed(0); }
+  if (sparkData.apo.length > 1) { const [mn,mx] = sMinMax(sparkData.apo); drawSparkline('spark-apo', sparkData.apo, mn, mx); document.getElementById('spark-apo-val').textContent = sparkData.apo[sparkData.apo.length-1].toFixed(0); }
+  if (sparkData.per.length > 1) { const [mn,mx] = sMinMax(sparkData.per); drawSparkline('spark-per', sparkData.per, mn, mx); document.getElementById('spark-per-val').textContent = sparkData.per[sparkData.per.length-1].toFixed(0); }
+
+  // Event log
+  const logEl = document.getElementById('event-log');
+  if (logEl) {
+    logEl.innerHTML = events.map(e =>
+      '<div style="display:flex;gap:10px"><span style="color:var(--text-dim);white-space:nowrap">' + e.time + '</span><span>' + e.msg + '</span></div>'
+    ).reverse().join('');
+  }
+
+  // Try to auto-focus camera
+  initCameraOnShip();
+}
+
+// ── TOGGLE CONTROLS ─────────────────────────────────────────
+// Ship tracking toggle
+document.getElementById('toggle-track-ship').addEventListener('change', (e) => {
+  trackShip = e.target.checked;
+  if (trackShip && state.posX != null) {
+    // Zoom in closer when tracking
+    camDist = Math.max(7500, Math.min(20000, camDist));
+  }
+  updateCamera();
+  logEvent(trackShip ? 'CAMERA: SHIP TRACKING ON' : 'CAMERA: SHIP TRACKING OFF');
+});
+
+// Light theme toggle — updates CSS + Three.js scene colors
+function applyThemeToScene(t) {
+  currentThemeColors = t;
+  scene.background.setHex(t.bg);
+  // Globe group children: core, wire, lats, equator, lons, atmo, coastlines
+  earthGroup.children.forEach(child => {
+    if (!child.material) return;
+    const m = child.material;
+    if (child === earthGroup.children[0]) { m.color.setHex(t.core); m.opacity = t.coreOp; }
+    else if (child === earthGroup.children[1]) { m.color.setHex(t.wire); m.opacity = t.wireOp; }
+    else if (child.material.type === 'ShaderMaterial') { /* atmo — leave as is */ }
+    else if (child.material.color) {
+      // Coastlines and grid lines
+      const c = child.material.color.getHex();
+      if (c === 0x4a9eff || c === 0x0077BB) { m.color.setHex(t.coast); m.opacity = t.coastOp; }
+      else if (c === 0x3366cc || c === 0x4070A0) { m.color.setHex(t.eq); m.opacity = t.eqOp; }
+      else { m.color.setHex(t.lat); m.opacity = t.latOp; }
+    }
+  });
+  // Surface feature materials
+  coastlineMat.color.setHex(t.coast);
+  coastlineMat.opacity = t.coastOp;
+  craterMat.color.setHex(t.coast);
+  craterMat.opacity = t.coastOp * 0.6;
+  // Mars contact materials
+  marsContactMats.Certain.color.setHex(t.marsCertain);   marsContactMats.Certain.opacity = t.marsCertainOp;
+  marsContactMats.Approx.color.setHex(t.marsApprox);     marsContactMats.Approx.opacity = t.marsApproxOp;
+  marsContactMats.Internal.color.setHex(t.marsInternal);  marsContactMats.Internal.opacity = t.marsInternalOp;
+  marsContactMats.Border.color.setHex(t.marsBorder);     marsContactMats.Border.opacity = t.marsBorderOp;
+  // Jupiter band materials
+  jupiterMats.boundary.color.setHex(t.jupBand);   jupiterMats.boundary.opacity = t.jupBandOp;
+  jupiterMats.belt_hash.color.setHex(t.jupHash);  jupiterMats.belt_hash.opacity = t.jupHashOp;
+  jupiterMats.storm.color.setHex(t.jupStorm);      jupiterMats.storm.opacity = t.jupStormOp;
+  jupiterMats.equator.color.setHex(t.jupBand);     jupiterMats.equator.opacity = t.jupBandOp;
+  jupiterMats.storm_detail.color.setHex(t.jupStorm); jupiterMats.storm_detail.opacity = t.jupStormOp * 0.6;
+  // Markers
+  if (shipMarker) shipMarker.material.color.setHex(t.ship);
+  if (apoMarker) apoMarker.material.color.setHex(t.apo);
+  if (perMarker) perMarker.material.color.setHex(t.per);
+  // Stars
+  scene.children.forEach(child => {
+    if (child.type === 'Points' && child.material) child.material.opacity = t.starOp;
+  });
+}
+
+document.getElementById('toggle-light-theme').addEventListener('change', (e) => {
+  const isLight = e.target.checked;
+  document.body.classList.toggle('light', isLight);
+  applyThemeToScene(isLight ? lightScene : darkScene);
+  logEvent(isLight ? 'THEME: HAB RESEARCH' : 'THEME: SHIP BRIDGE');
+});
+
+// ── ANIMATE ─────────────────────────────────────────────────
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Rotate globe using CCF→CCI quaternion from parent body
+  // CCI (Z-up) → Three.js (Y-up): (qx,qy,qz,qw) → (qx, qz, -qy, qw)
+  const q = new THREE.Quaternion(
+    state.bodyRotQx,
+    state.bodyRotQz,
+    -state.bodyRotQy,
+    state.bodyRotQw
+  );
+  earthGroup.setRotationFromQuaternion(q);
+
+  // Update orbit geometry
+  updateOrbit3D();
+
+  // Keep camera tracking ship if enabled
+  if (trackShip) updateCamera();
+
+  // Update label positions
+  updateLabelProjections();
+
+  renderer.render(scene, camera);
+}
+animate();
+
+// Update DOM at 2 Hz
+setInterval(updateDOM, 500);
+
+</script>
+</body>
+</html>

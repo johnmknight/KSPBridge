@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio / Rider / JetBrains
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet
+packages/
+*.nupkg
+
+# Logs
+*.log
+
+# OS cruft
+Thumbs.db
+.DS_Store
+
+# Local override files (developer-specific KSP paths, etc.)
+*.local.props

@@ -1,0 +1,107 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    KSPBridge plugin build configuration.
+
+    Target framework is .NET Framework 4.7.1 because KSP 1.12.5 runs on
+    Unity 2019.4 LTS, which uses a Mono runtime compatible with .NET
+    Framework 4.7.1. Newer .NET versions (5/6/9) will not load inside KSP.
+
+    LangVersion is pinned to 7.3 — the last version fully supported on
+    .NET Framework 4.7.1 without polyfills. Keeps us out of trouble with
+    nullable reference types, records, and other modern features that
+    won't run on the old runtime.
+
+    The KSPRoot property locates the KSP install for two purposes:
+      1. HintPath for the Assembly-CSharp / UnityEngine references below.
+      2. The DeployToKSP post-build target that copies the built DLLs into
+         the live GameData folder for fast iteration.
+    Override KSPRoot via environment variable or a Directory.Build.props
+    file if your install is somewhere else.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net471</TargetFramework>
+    <AssemblyName>KSPBridge</AssemblyName>
+    <RootNamespace>KSPBridge</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Version>0.8.0</Version>
+    <AssemblyVersion>0.8.0.0</AssemblyVersion>
+    <FileVersion>0.8.0.0</FileVersion>
+    <Company>John M. Knight</Company>
+    <Product>KSPBridge</Product>
+    <Copyright>Copyright (c) 2026 John M. Knight</Copyright>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+  <!-- KSP install location and derived paths. -->
+  <PropertyGroup>
+    <KSPRoot Condition="'$(KSPRoot)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program</KSPRoot>
+    <KSPManaged>$(KSPRoot)\KSP_x64_Data\Managed</KSPManaged>
+    <KSPGameData>$(KSPRoot)\GameData\KSPBridge</KSPGameData>
+  </PropertyGroup>
+
+  <!--
+    NuGet package references. MQTTnet 4.3.7.1207 is the last 4.x release and
+    the last version to support .NET Framework — 5.x targets only modern
+    .NET. Our net471 target consumes the package's net461 build, which has
+    zero runtime dependencies.
+  -->
+  <ItemGroup>
+    <PackageReference Include="MQTTnet" Version="4.3.7.1207" />
+    <PackageReference Include="MQTTnet.Extensions.ManagedClient" Version="4.3.7.1207" />
+  </ItemGroup>
+
+  <!--
+    References to KSP's own assemblies. These are marked Private=false
+    (equivalent to CopyLocal=false) so they are NOT copied into our build
+    output — we only use them for compilation. At runtime inside KSP,
+    the game's own copies are loaded.
+  -->
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(KSPManaged)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(KSPManaged)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(KSPManaged)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(KSPManaged)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(KSPManaged)\UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.JSONSerializeModule">
+      <HintPath>$(KSPManaged)\UnityEngine.JSONSerializeModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!--
+    Post-build: copy every DLL from output into the KSP GameData folder.
+    Using *.dll (rather than just $(AssemblyName).dll) ensures MQTTnet's
+    runtime DLLs ship alongside our plugin.
+  -->
+  <Target Name="DeployToKSP" AfterTargets="Build">
+    <ItemGroup>
+      <DeployFiles Include="$(OutputPath)*.dll" />
+    </ItemGroup>
+    <MakeDir Directories="$(KSPGameData)\Plugins" />
+    <Copy
+      SourceFiles="@(DeployFiles)"
+      DestinationFolder="$(KSPGameData)\Plugins"
+      ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed @(DeployFiles->'%(Filename)%(Extension)', ', ') to $(KSPGameData)\Plugins" />
+  </Target>
+
+</Project>
