@@ -88,6 +88,17 @@ namespace KSPBridge.Telemetry.Producers
             double rollDot = Vector3d.Dot(upInPlane, roofInPlane);
             double roll = Math.Atan2(rollCross, rollDot);
 
+            // ---- Root-transform quaternion (world frame) ----------
+            // For external 3D renderers that need to pose the full
+            // vessel as a rigid body (docking cam, VirtualCupola-style
+            // overlays). Read from vessel.transform rather than
+            // ReferenceTransform so that switching "control from here"
+            // does not flip the rendered vessel. KSPEVU's glb is
+            // organised relative to this same root transform, so
+            // applying this quaternion to the glb's root node poses
+            // every part correctly in a rigid-body render.
+            Quaternion q = vessel.transform.rotation;
+
             return new AttitudeTelemetry
             {
                 id = vessel.id.ToString(),
@@ -95,6 +106,10 @@ namespace KSPBridge.Telemetry.Producers
                 heading = heading,
                 pitch = pitch,
                 roll = roll,
+                rotationX = q.x,
+                rotationY = q.y,
+                rotationZ = q.z,
+                rotationW = q.w,
             };
         }
     }

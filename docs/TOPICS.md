@@ -74,6 +74,23 @@ pitch = ±π/2.
 | `heading` | number | `[0, 2π)` | Compass bearing of the nose, 0 = north, clockwise. |
 | `pitch` | number | `[-π/2, π/2]` | Nose elevation above horizon; +π/2 straight up. |
 | `roll` | number | `(-π, π]` | Rotation about nose axis; 0 = wings level, + = right wing down. |
+| `rotationX` | number | `[-1, 1]` | Vessel root-transform quaternion X, Unity world frame. |
+| `rotationY` | number | `[-1, 1]` | Vessel root-transform quaternion Y, Unity world frame. |
+| `rotationZ` | number | `[-1, 1]` | Vessel root-transform quaternion Z, Unity world frame. |
+| `rotationW` | number | `[-1, 1]` | Vessel root-transform quaternion W, Unity world frame. |
+
+`rotationX/Y/Z/W` is `Vessel.transform.rotation` as a unit quaternion — the
+rotation of the vessel's root part in Unity's world frame. This is **separate
+from and not derivable from** `heading`/`pitch`/`roll`, which describe nose
+direction in the local surface frame. Use the quaternion to pose the whole
+vessel as a rigid body in an external 3D renderer (docking cam, external
+viewer). KSPEVU's glb is organised relative to this same root transform, so
+applying the quaternion to the glb's root node poses every part correctly.
+
+Handedness matches `state_vectors`: Unity left-handed, y-up. Consumers
+swapping to right-handed axes must convert the quaternion consistently with
+their position swap — the naive elementwise axis swap used for position
+vectors does not produce a valid rotation quaternion.
 
 ---
 

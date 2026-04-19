@@ -35,5 +35,32 @@ namespace KSPBridge.Telemetry
         /// Positive = right wing down (right roll), negative = left wing down.
         /// </summary>
         public double roll;
+
+        /// <summary>
+        /// Vessel root transform rotation as a unit quaternion, Unity
+        /// world frame. This is <c>Vessel.transform.rotation</c> — the
+        /// rotation of the vessel's root part — NOT derived from
+        /// <see cref="heading"/> / <see cref="pitch"/> / <see cref="roll"/>,
+        /// which describe nose direction in the local surface frame.
+        ///
+        /// Use this to pose the whole vessel as a rigid body in an
+        /// external 3D renderer. KSPEVU's glb is organised with part
+        /// nodes at <c>orgPos</c> / <c>orgRot</c> relative to this same
+        /// root transform, so applying the quaternion to the glb root
+        /// poses every part correctly.
+        ///
+        /// Handedness matches state_vectors: Unity left-handed, y-up.
+        /// Consumers swapping to right-handed axes must convert the
+        /// quaternion consistently with their position swap — the
+        /// naive elementwise mapping used for position vectors does
+        /// not work for quaternions.
+        /// </summary>
+        public double rotationX;
+        /// <inheritdoc cref="rotationX"/>
+        public double rotationY;
+        /// <inheritdoc cref="rotationX"/>
+        public double rotationZ;
+        /// <inheritdoc cref="rotationX"/>
+        public double rotationW;
     }
 }
