@@ -7,7 +7,7 @@ Grafana, or any MQTT subscriber can consume real-time flight data. Wire format
 matches KSA-Bridge's topic names and JSON schemas, so consoles and dashboards
 built for one game work against the other with only a topic-prefix change.
 
-## Status — v0.10.0
+## Status — v0.11.0
 
 **Nine telemetry topics shipping.** The hard-scifi FDO console included in
 this repo lights up end-to-end: vessel identification, orbital elements,
@@ -15,18 +15,29 @@ state vectors, navigation readouts, attitude, maneuver plan, SOI encounters,
 performance (ΔV / TWR), and live planet rotation all populate from real game
 data.
 
-The console is now **body-aware**: when the active vessel transitions between
-SOIs, the globe swaps to the appropriate body's mask and vector layers
-automatically. Detailed surface assets ship for **Kerbin** (coastlines + ice
-caps + filled continents), **Mun** (basin contours + grey terrain), and
-**Duna** (multi-level topographic contours + polar caps). Every other stock
-body falls back to a flat sphere in that body's signature colour
-(Eve = purple, Jool = green, Eeloo = pale, etc.).
+The console is **body-aware** for every stock world. When the active vessel
+transitions between SOIs, the globe swaps to the appropriate body's vector
+layers automatically. v0.11 unified every body under one multi-contour
+pipeline (`scripts/build_body_contours.py`):
 
-Source map images for the remaining bodies (Moho, Eve, Gilly, Minmus, Ike,
-Dres, Jool, Laythe, Vall, Tylo, Bop, Pol) are stashed in
-`consoles/hard-scifi/source/bodies/` ready to be wired up via the same Python
-pipeline used for Mun and Duna.
+- **Tier 1 — rich-feature bodies:** Kerbin, Eve, Moho, Ike, Tylo, Vall,
+  Laythe — each gets 3–6 traced contour layers with a per-body colour ramp
+  (deep ocean → highland peaks for Kerbin; rust basins → tan peaks for
+  Duna; purple valleys → bright highlands for Eve; etc.).
+- **Tier 2 — uniform bodies:** Gilly, Bop, Pol, Minmus, Eeloo, Dres — 1–4
+  traced layers showing their principal features.
+- **Special — Jool:** synthetic horizontal cloud bands since it's a gas
+  giant. No image tracing; the bands are emitted directly by the script.
+- **Mun, Duna:** retain their original dedicated pipelines; both still use
+  the same `bodyLayersFromContours()` renderer on the console side.
+
+Surface sources come from the stock game plus biome maps pulled from the
+[JNSQ](https://github.com/Galileo88/JNSQ) mod for Laythe and Minmus. The
+Python pipeline converts every source image into a per-body `*_contours.js`
+asset with traced polygon rings and a colour palette, then the FDO console's
+`BODY_REGISTRY` wires each one to the globe renderer.
+
+Topics still on the backlog (no producers yet):
 
 Topics still on the backlog (no producers yet):
 
@@ -34,6 +45,7 @@ Topics still on the backlog (no producers yet):
 - `resources` — propellant masses, total vehicle mass
 - `situation` — expanded landed/splashed/flying bit flags
 - `atmosphere` — density, static pressure, temperature
+- `staging` — next-stage / upcoming-stage composition (event-driven)
 
 See [docs/TOPICS.md](docs/TOPICS.md) for the full authoritative schema
 reference for every currently published topic.
