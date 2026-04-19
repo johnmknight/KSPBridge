@@ -77,6 +77,13 @@ namespace KSPBridge.Telemetry
                 new TargetStateVectorsProducer(),
                 new TargetAttitudeProducer(),
 
+                // Docking-scenario lifecycle. Retained (via IRetainable)
+                // so a late subscriber immediately sees the current
+                // engagement state. Low rate (1 Hz) — this topic
+                // describes UI-scale state transitions, not flight
+                // dynamics.
+                new DockingContextProducer(),
+
                 // Future producers added here — one line per topic.
             };
         }
@@ -157,12 +164,16 @@ namespace KSPBridge.Telemetry
                 // based on the runtime type's [Serializable] public fields.
                 string json = JsonUtility.ToJson(payload);
 
-                // Retain=false: streaming telemetry. A new subscriber
-                // should wait for the next publish (~100 ms away) rather
-                // than being handed a stale message from a previous
-                // session. Bridge meta topics (status) use retain=true
-                // independently inside MqttBridge.
-                _bridge.Publish(producer.TopicSuffix, json, retain: false);
+                // Retain: default false (streaming telemetry — new
+                // subscribers should wait for the next publish rather
+                // than be handed a stale frame). Producers that own
+                // slow-changing lifecycle state opt into retention by
+                // implementing IRetainable; the scheduler flips the
+                // flag on their publishes. Bridge meta topics (status)
+                // handle their own retention independently inside
+                // MqttBridge.
+                bool retain = producer is IRetainable retainable && retainable.Retain;
+                _bridge.Publish(producer.TopicSuffix, json, retain: retain);
             }
             catch (Exception ex)
             {

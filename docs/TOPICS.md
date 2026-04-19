@@ -248,6 +248,53 @@ glb at `/vessel/<hash>.glb` when rendering.
 
 ---
 
+## `docking/context` - 1 Hz, retained
+
+Lifecycle description of the current docking scenario. Publishes only
+when the active vessel is being controlled from one of its docking
+ports (i.e., the reference transform is on a part carrying a
+`ModuleDockingNode`). Retained on the broker so a late-subscribing
+viewer immediately sees the current state without waiting up to a
+second for the next scheduled tick.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `ownVesselId` | string | Active vessel's Guid id (matches `vehicle.id`). |
+| `ownVesselPersistentId` | number | Active vessel's persistentId. |
+| `ownPortPersistentId` | number | Part persistentId that carries the controlling docking node. Keys into KSPEVU's glb as a part-root node. |
+| `ownPortModuleIndex` | number | Index of the controlling `ModuleDockingNode` within its part's `Modules` list. Matches KSPEVU's `extras.dockingPorts[].moduleIndex`. |
+| `targetVesselId` | string | Target vessel's Guid id, empty if no target or non-vessel target. |
+| `targetVesselPersistentId` | number | Target vessel's persistentId, 0 if none. |
+| `targetPortPersistentId` | number | Part persistentId on the target vessel that carries the specific docking node being targeted. 0 if the target is a generic vessel rather than a specific port. |
+| `targetPortModuleIndex` | number | Module index of the targeted node within its part, 0 if no specific port targeted. |
+| `state` | string | Coarse engagement state. One of: `idle`, `armed`, `soft_dock`, `hard_dock`, `disabled`. See below. |
+| `rawState` | string | Raw `ModuleDockingNode.state` from KSP (e.g. `"Docked (docker)"`, `"Acquire (dockee)"`). For debugging / fine-grained UI; not stable across KSP versions. |
+
+### `state` values
+
+- `idle` — controlling from a port, no target or target is a generic vessel
+- `armed` — specific target port selected, approach underway but not engaged
+- `soft_dock` — magnetic acquire in progress (KSP `Acquire*` states)
+- `hard_dock` — physically docked (KSP `Docked*` / `PreAttached`)
+- `disabled` — own port is shielded or otherwise unavailable
+
+Absence of a recent `docking/context` message means "not in a docking
+scenario" — the viewer should hide docking UI. On transition from a
+docking scenario back to a non-docking control reference, the retained
+value stays on the broker until the next genuine docking scenario
+overwrites it, so consumers should also treat a stale retained message
+(via their own freshness check) as equivalent to "no scenario."
+
+### Cross-referencing with KSPEVU
+
+The `ownPortPersistentId` + `ownPortModuleIndex` pair keys into the
+target vessel's KSPEVU glb: walk the glb's part-root nodes, match by
+`part_<persistentId>_*` node name, read `extras.dockingPorts[moduleIndex]`
+for the mating-point pose in part-local coordinates. Same pattern for
+the target port on the target vessel's glb.
+
+---
+
 ## Not yet implemented
 
 The following topics are defined in the KSA-Bridge schema and may be added
