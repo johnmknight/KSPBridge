@@ -171,6 +171,27 @@ renders only "there's an encounter" plus the distance at capture.
 
 ---
 
+## `performance` — 2 Hz
+
+Reports propulsive performance figures (ΔV at vacuum / ASL / actual,
+current-stage TWR, total mass, current thrust). Uses KSP 1.12's stock
+`Vessel.VesselDeltaV` calculator under the hood.
+
+| Field | Type | Units | Meaning |
+|---|---|---|---|
+| `deltaV` | number | m/s | Total ΔV in current conditions. |
+| `deltaVVac` | number | m/s | Total ΔV in vacuum. |
+| `deltaVAsl` | number | m/s | Total ΔV at sea level. |
+| `twr` | number | — | Current-stage TWR against local gravity. |
+| `currentStageDeltaV` | number | m/s | ΔV of the current stage only. |
+| `mass` | number | kg | Total wet mass. |
+| `thrust` | number | N | Sum of currently-ignited engine thrust. |
+
+NaN / ∞ values from the calculator (transient states like empty stages
+or pre-staging) are filtered to 0.
+
+---
+
 ## Not yet implemented
 
 The following topics are defined in the KSA-Bridge schema and may be added
@@ -178,7 +199,6 @@ in future versions. They are NOT currently published.
 
 | Topic | Planned rate | Notes |
 |---|---|---|
-| `performance` | 2 Hz | ΔV per stage, TWR. Requires summing engine thrust/Isp and stage fuel masses. |
 | `dynamics` | 2 Hz | Body rates, linear acceleration, angular acceleration. |
 | `resources` | 2 Hz | Per-resource masses (LiquidFuel, Oxidizer, ElectricCharge, etc.). |
 | `situation` | 2 Hz | Expanded bit flags (landed / splashed / flying / docked). |

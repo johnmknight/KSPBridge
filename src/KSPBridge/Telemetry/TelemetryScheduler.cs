@@ -64,6 +64,7 @@ namespace KSPBridge.Telemetry
                 new ParentBodyProducer(),
                 new ManeuverProducer(),
                 new EncounterProducer(),
+                new PerformanceProducer(),
                 // Future producers added here — one line per topic.
             };
         }

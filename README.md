@@ -7,16 +7,29 @@ Grafana, or any MQTT subscriber can consume real-time flight data. Wire format
 matches KSA-Bridge's topic names and JSON schemas, so consoles and dashboards
 built for one game work against the other with only a topic-prefix change.
 
-## Status — v0.8.0
+## Status — v0.10.0
 
-**8 of ~13 planned topics shipping.** The hard-scifi FDO console included in
+**Nine telemetry topics shipping.** The hard-scifi FDO console included in
 this repo lights up end-to-end: vessel identification, orbital elements,
 state vectors, navigation readouts, attitude, maneuver plan, SOI encounters,
-and live planet rotation all populate from real game data.
+performance (ΔV / TWR), and live planet rotation all populate from real game
+data.
 
-Remaining topics (future work):
+The console is now **body-aware**: when the active vessel transitions between
+SOIs, the globe swaps to the appropriate body's mask and vector layers
+automatically. Detailed surface assets ship for **Kerbin** (coastlines + ice
+caps + filled continents), **Mun** (basin contours + grey terrain), and
+**Duna** (multi-level topographic contours + polar caps). Every other stock
+body falls back to a flat sphere in that body's signature colour
+(Eve = purple, Jool = green, Eeloo = pale, etc.).
 
-- `performance` — ΔV and TWR (requires engine / fuel-mass math)
+Source map images for the remaining bodies (Moho, Eve, Gilly, Minmus, Ike,
+Dres, Jool, Laythe, Vall, Tylo, Bop, Pol) are stashed in
+`consoles/hard-scifi/source/bodies/` ready to be wired up via the same Python
+pipeline used for Mun and Duna.
+
+Topics still on the backlog (no producers yet):
+
 - `dynamics` — body rates, linear & angular acceleration
 - `resources` — propellant masses, total vehicle mass
 - `situation` — expanded landed/splashed/flying bit flags
@@ -133,11 +146,45 @@ to match your own Mosquitto (or other MQTT broker).
 ## Browser console
 
 The bundled `consoles/hard-scifi/hardscifi-fdo-console.html` is an FDO-style
-mission-control dashboard adapted from KSA-Bridge. Open it in any modern
-browser — it connects to the homelab Mosquitto broker over WebSocket at
-`ws://appserv1.local:9002` and subscribes to `ksp/telemetry/#`. Three.js
-draws the planet and orbit; 8 panels pull live data from the topics
-documented in [docs/TOPICS.md](docs/TOPICS.md).
+mission-control dashboard adapted from KSA-Bridge. Open it via a local HTTP
+server (file:// breaks texture loads in most browsers) — connects to the
+homelab Mosquitto broker over WebSocket at `ws://appserv1.local:9002` and
+subscribes to `ksp/telemetry/#`. Three.js draws the planet and orbit; the
+panels pull live data from the topics documented in
+[docs/TOPICS.md](docs/TOPICS.md).
+
+Quick start:
+
+```powershell
+cd consoles/hard-scifi
+python -m http.server 8000
+# then open http://localhost:8000/hardscifi-fdo-console.html
+```
+
+### Per-body assets
+
+The globe rendering switches dynamically based on the `parent_body` topic.
+Each body's data lives next to the console:
+
+```
+consoles/hard-scifi/
+  data/
+    kerbin_mask.png + kerbin_coastline.js   (full coastlines + ice rings)
+    mun_mask.png + mun_basin.js             (basin outlines)
+    duna_mask.png + duna_ice.js             (multi-level topo contours + ice)
+  source/
+    bodies/                                  (raw body maps awaiting wire-up)
+```
+
+To add a new body's detailed map:
+
+1. Drop the equirectangular surface image into `source/bodies/<body>.{jpg,png}`.
+2. Run `python scripts/build_kerbin_topojson.py --body <body> --input ... --js-output ... --mask-png ...` (Kerbin / Mun / Duna pipelines exist; new bodies typically need a small dedicated pipeline branch tuned to their palette).
+3. Add a `<script src="...">` tag to the console HTML head.
+4. Add an entry to `BODY_REGISTRY` in the console's JS.
+
+Bodies without detailed assets render as flat-coloured spheres via
+`BODY_FALLBACK_COLORS` (every stock body has a tuned colour).
 
 ## Compatibility with KSA-Bridge consumers
 

@@ -23,3 +23,11 @@ Thumbs.db
 
 # Local override files (developer-specific KSP paths, etc.)
 *.local.props
+
+# Root-level body map images — these are iteration artifacts dropped
+# here by John during source selection. The curated / in-use sources
+# live under consoles/hard-scifi/source/ and are committed from there.
+/*.jpg
+/*.png
+/*.jpeg
+/*.webp

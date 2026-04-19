@@ -23,7 +23,7 @@ namespace KSPBridge
     public class KSPBridgePlugin : MonoBehaviour
     {
         /// <summary>Human-readable plugin version. Update on each release.</summary>
-        public const string Version = "0.8.0-body-maneuver-encounter";
+        public const string Version = "0.10.0";
 
         /// <summary>
         /// Prefix used in every log line this plugin emits, so they are easy
