@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Docking Cam -- External View</title>
+
+  <!--
+    KSPBridge's docking-cam console.
+
+    Single-file browser view that renders two vessels (own ship +
+    target) as a synthetic 3D scene driven entirely by MQTT telemetry.
+    Pairs with the KSPBridge v0.14+ plugin and KSPEVU v0.10+ glb
+    exporter on the KSP side.
+
+    Topics consumed:
+      ksp/telemetry/vehicle            own ship id + name
+      ksp/telemetry/state_vectors      own ship CCI position + velocity
+      ksp/telemetry/attitude           own ship attitude (uses rotationX/Y/Z/W)
+      ksp/telemetry/target/vehicle     target ship id + name
+      ksp/telemetry/target/state_vectors  target CCI pose
+      ksp/telemetry/target/attitude    target attitude
+      ksp/telemetry/docking/context    lifecycle state (retained)
+      ksp/vessel_model/ready           KSPEVU glb-ready notifications
+
+    v1 (this file): renders own + target as labelled boxes posed from
+    telemetry, overlays the full Crew-Dragon-inspired HUD, and shows a
+    raw debug panel at the bottom for end-to-end data verification.
+    Box placeholders will be swapped for KSPEVU glbs in a follow-up.
+  -->
+
+  <!-- Local libs copied from consoles/hard-scifi/lib/ so this console
+       is self-contained. Matches the existing FDO console setup. -->
+  <script src="lib/mqtt.min.js"></script>
+  <script src="lib/three.min.js"></script>
+
+  <style>
+    /* --------------------------------------------------------------
+       Colour system. Extracted from the Crew Dragon reference shots
+       (see docs/external-docking-cam-feasibility.md in the Cowork
+       outputs). Red is reserved for active/live states only; amber
+       for caution; cyan for in-view / trend / rate readouts; green
+       for nominal and physical-fiducial markings.
+    -------------------------------------------------------------- */
+    :root {
+      --bg:               #000000;
+      --bg-panel:         rgba(8, 10, 16, 0.88);
+      --border:           rgba(255, 255, 255, 0.12);
+      --border-bright:    rgba(255, 255, 255, 0.28);
+
+      --text-primary:     #ffffff;
+      --text-secondary:   #8a8f9a;
+      --text-dim:         #505562;
+
+      --rate:             #22d3ee;      /* cyan — trend / rate values */
+      --acquired:         #22c55e;      /* green — target acquired, physical fiducials */
+      --caution:          #f59e0b;      /* amber — caution bands, sun in FOV */
+      --alert:            #ef4444;      /* red — active / recording */
+
+      --font-mono:        "Share Tech Mono", "IBM Plex Mono", ui-monospace, monospace;
+      --font-label:       "Barlow Condensed", "Oswald", "IBM Plex Sans Condensed", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-mono);
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* --------------------------------------------------------------
+       Layout: full-screen Three.js canvas, HUD overlay on top, debug
+       panel pinned to the bottom 220 px. The HUD overlay is absolutely
+       positioned and pointer-events:none so clicks fall through to
+       the canvas (future: orbit controls).
+    -------------------------------------------------------------- */
+    #scene {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    #hud {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      pointer-events: none;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "tl  top  tr"
+        "l   mid  r"
+        "bl  bot  br";
+    }
+
+    /* Corner slots for warning icons + free-standing readouts
+       (matches Crew Dragon's 0.00g in the top-left, sun-in-FOV in
+       the top-right, etc.). Populated as data becomes available. */
+    .corner {
+      padding: 16px 20px;
+      min-width: 100px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+    .corner.tl { grid-area: tl; text-align: left;  }
+    .corner.tr { grid-area: tr; text-align: right; }
+    .corner.bl { grid-area: bl; text-align: left;  }
+    .corner.br { grid-area: br; text-align: right; }
+
+    /* Mid area holds the reticle SVG, centred. Cardinal readouts are
+       absolute-positioned siblings of the SVG so they can anchor to
+       specific angular positions around the reticle's centre. */
+    .mid {
+      grid-area: mid;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #reticle {
+      width: min(70vmin, 720px);
+      height: min(70vmin, 720px);
+      opacity: 0.85;
+    }
+    #reticle circle, #reticle line, #reticle path {
+      fill: none;
+      stroke: var(--text-primary);
+      stroke-width: 1.25;
+      vector-effect: non-scaling-stroke;
+    }
+    #reticle .inner    { stroke: var(--acquired); }
+    #reticle .crosshair{ stroke: var(--text-primary); stroke-width: 1; }
+    #reticle .own-mark { fill: var(--rate); stroke: none; }
+
+    /* Cardinal readouts arranged around the reticle. Each uses the
+       dual-tier pattern: big primary value, small rate/trend below. */
+    .readout {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      font-family: var(--font-mono);
+      line-height: 1.05;
+      min-width: 72px;
+    }
+    .readout .label {
+      font-family: var(--font-label);
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      color: var(--text-secondary);
+      margin-bottom: 3px;
+    }
+    .readout .big {
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+    }
+    .readout .small {
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: var(--rate);
+      margin-top: 2px;
+    }
+
+    /* Positioning relative to .mid (which centres the reticle). */
+    .readout.top    { top: 4%;  left: 50%; transform: translateX(-50%); }
+    .readout.right  { top: 50%; right: 6%; transform: translateY(-50%); }
+    .readout.left   { top: 50%; left: 6%;  transform: translateY(-50%); }
+    .readout.bottom { bottom: 4%; left: 50%; transform: translateX(-50%); }
+    .readout.bot-r  { bottom: 10%; right: 8%; }
+
+    /* PYR vertical stack on the left. Its three values render in
+       a column, each with a P/Y/R prefix. */
+    .pyr .stack {
+      display: grid;
+      grid-template-columns: auto auto;
+      gap: 4px 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    .pyr .k { color: var(--text-secondary); font-family: var(--font-label); font-size: 13px; letter-spacing: 0.2em; }
+    .pyr .v { color: var(--text-primary);   font-size: 14px; }
+
+    /* Edge chevrons — flight-director correction prompts. Activate
+       when the relative lateral/vertical offset exceeds a threshold. */
+    .chevron {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 32px;
+      color: var(--text-primary);
+      opacity: 0;
+      transition: opacity 120ms;
+      user-select: none;
+    }
+    .chevron.active { opacity: 0.85; }
+    .chevron.left   { left: 2%;  top: 50%; transform: translateY(-50%); }
+    .chevron.right  { right: 2%; top: 50%; transform: translateY(-50%); }
+    .chevron.up     { top: 2%;   left: 50%; transform: translateX(-50%); }
+    .chevron.down   { bottom: 9%; left: 50%; transform: translateX(-50%); }
+
+    /* --------------------------------------------------------------
+       Status / connection pill, top-centre. Flips to red when MQTT
+       disconnects — the single most useful indicator for "is this
+       thing talking to the bridge at all?"
+    -------------------------------------------------------------- */
+    .top { grid-area: top; display: flex; justify-content: center; padding-top: 12px; }
+    #connection {
+      padding: 4px 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-panel);
+      border-radius: 2px;
+      font-family: var(--font-label);
+      font-size: 12px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+    #connection.ok        { color: var(--acquired); border-color: rgba(34,197,94,0.4); }
+    #connection.err       { color: var(--alert);    border-color: rgba(239,68,68,0.4); }
+
+    /* --------------------------------------------------------------
+       Debug panel. Pinned to the bottom 220 px, semi-opaque black,
+       shows every topic's latest payload. Critical during bring-up;
+       easily toggleable (keyboard `d`).
+    -------------------------------------------------------------- */
+    #debug {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      height: 220px;
+      z-index: 20;
+      background: rgba(0,0,0,0.78);
+      border-top: 1px solid var(--border);
+      overflow: auto;
+      padding: 10px 14px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      transition: transform 160ms;
+    }
+    #debug.hidden { transform: translateY(100%); }
+    #debug h4 {
+      margin: 6px 0 3px 0;
+      color: var(--text-primary);
+      font-family: var(--font-label);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      font-weight: normal;
+    }
+    #debug pre {
+      margin: 0;
+      font-family: var(--font-mono);
+      white-space: pre-wrap;
+      word-break: break-all;
+      color: var(--text-secondary);
+    }
+    #debug .grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 4px 16px;
+    }
+    #debug .age {
+      display: inline-block;
+      margin-left: 6px;
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    #debug .age.stale { color: var(--alert); }
+  </style>
+</head>
+<body>
+  <!-- Three.js canvas target. Scene is created and resized in JS. -->
+  <canvas id="scene"></canvas>
+
+  <!-- HUD overlay. Pure HTML/SVG, pointer-events disabled at the
+       container level so nothing intercepts canvas interaction. -->
+  <div id="hud">
+    <div class="corner tl" id="accel-g">0.00 g</div>
+    <div class="top">
+      <div id="connection">Connecting...</div>
+    </div>
+    <div class="corner tr" id="warn-sun"></div>
+
+    <div class="corner l"></div>
+
+    <div class="mid">
+      <!-- Concentric-ring reticle. Three rings + crosshair fiducial
+           + own-mark indicator (cyan dot that tracks lateral/vertical
+           offset; drives onto the crosshair for successful dock). -->
+      <svg id="reticle" viewBox="-100 -100 200 200" xmlns="http://www.w3.org/2000/svg">
+        <!-- Outer: coarse acquisition envelope -->
+        <circle cx="0" cy="0" r="90" />
+        <!-- Middle: alignment warning band -->
+        <circle cx="0" cy="0" r="60" />
+        <!-- Inner: soft-capture envelope (green = acquired) -->
+        <circle cx="0" cy="0" r="30" class="inner" />
+        <!-- Central crosshair on the target -->
+        <line class="crosshair" x1="-8" y1="0" x2="8" y2="0" />
+        <line class="crosshair" x1="0" y1="-8" x2="0" y2="8" />
+        <!-- Small corner ticks on the outer ring at cardinal angles -->
+        <line x1="0" y1="-92" x2="0" y2="-85" />
+        <line x1="0" y1="92"  x2="0" y2="85"  />
+        <line x1="-92" y1="0" x2="-85" y2="0" />
+        <line x1="92" y1="0"  x2="85" y2="0"  />
+        <!-- Own-mark: position is driven by JS from relative lateral
+             offset. Starts off-screen. -->
+        <circle id="ownMark" class="own-mark" cx="0" cy="0" r="3.2" />
+      </svg>
+
+      <!-- Cardinal dual-tier readouts. Big primary + small rate. -->
+      <div class="readout top" id="ro-roll">
+        <div class="label">Roll</div>
+        <div class="big">—</div>
+        <div class="small">—</div>
+      </div>
+      <div class="readout right" id="ro-pitch">
+        <div class="label">Pitch</div>
+        <div class="big">—</div>
+        <div class="small">—</div>
+      </div>
+      <div class="readout left pyr" id="ro-pyr">
+        <div class="label">P / Y / R</div>
+        <div class="stack">
+          <div class="k">P</div><div class="v" data-k="p">—</div>
+          <div class="k">Y</div><div class="v" data-k="y">—</div>
+          <div class="k">R</div><div class="v" data-k="r">—</div>
+        </div>
+      </div>
+      <div class="readout bottom" id="ro-range">
+        <div class="label">Range</div>
+        <div class="big">—</div>
+        <div class="small">—</div>
+      </div>
+      <div class="readout bot-r" id="ro-range-rate">
+        <div class="label">Range Rate</div>
+        <div class="big">—</div>
+        <div class="small">—</div>
+      </div>
+
+      <!-- Flight-director correction prompts. Activated by JS when
+           offset exceeds the per-axis threshold. -->
+      <div class="chevron left">&lt;&lt;</div>
+      <div class="chevron right">&gt;&gt;</div>
+      <div class="chevron up">/\</div>
+      <div class="chevron down">\/</div>
+    </div>
+
+    <div class="corner r"></div>
+    <div class="corner bl" id="state-pill">IDLE</div>
+    <div class="corner br" id="range-tag"></div>
+  </div>
+
+  <!-- Debug panel: shows every topic's latest payload + age. Toggle
+       with keyboard `d`. Indispensable during bring-up; we'll probably
+       dial its prominence down once the HUD is trustworthy. -->
+  <div id="debug">
+    <div class="grid" id="debugGrid"></div>
+  </div>
+
+  <script>
+/* ==================================================================
+   Configuration
+   ================================================================== */
+
+// Broker URL. Homelab Mosquitto behind appserv1's nginx WebSocket
+// mapping at port 9002 (same as the FDO console uses). Override via
+// ?broker= query param during development on other networks.
+const BROKER_URL = new URLSearchParams(location.search).get('broker')
+  || 'ws://appserv1.local:9002';
+
+// Topic prefix. Must match KSPBridge's Settings.cfg `topic_prefix`.
+const PREFIX = 'ksp/telemetry';
+
+// How long a topic payload stays "fresh" before we flag it stale in
+// the debug panel. Per-topic would be better (docking/context is
+// 1 Hz, attitude is 10 Hz) but a single threshold is fine for v1.
+const STALE_MS = 1500;
+
+/* ==================================================================
+   State
+   ==================================================================
+   latest[topic] = { payload: <parsed JSON>, ts: <Date.now()> }
+   Previous-tick values for rate computation live on `prev[metric]`.
+*/
+const latest = {};
+const prev = {
+  roll: null, pitch: null, range: null, rangeRate: null,
+};
+
+/* ==================================================================
+   MQTT connection
+   ================================================================== */
+
+const conn = document.getElementById('connection');
+const client = mqtt.connect(BROKER_URL, {
+  clientId: 'docking-cam-' + Math.random().toString(16).slice(2, 10),
+  reconnectPeriod: 2000,
+  keepalive: 30,
+});
+
+client.on('connect', () => {
+  conn.textContent = 'Connected — ' + BROKER_URL.replace('ws://', '');
+  conn.className = 'ok';
+  // Subscribe to everything under our two prefixes. Using a wildcard
+  // means we automatically pick up future target/* sub-topics too.
+  client.subscribe(PREFIX + '/#');
+  client.subscribe('ksp/vessel_model/#');
+});
+
+client.on('reconnect', () => {
+  conn.textContent = 'Reconnecting...';
+  conn.className = '';
+});
+
+client.on('offline', () => {
+  conn.textContent = 'Offline — ' + BROKER_URL.replace('ws://', '');
+  conn.className = 'err';
+});
+
+client.on('error', (err) => {
+  console.warn('MQTT error', err);
+  conn.textContent = 'MQTT error';
+  conn.className = 'err';
+});
+
+client.on('message', (topic, payload) => {
+  let parsed = null;
+  try { parsed = JSON.parse(payload.toString()); }
+  catch (e) { /* keep raw text as payload */ parsed = payload.toString(); }
+  latest[topic] = { payload: parsed, ts: Date.now() };
+  onTopic(topic, parsed);
+});
+
+/* ==================================================================
+   Topic routing. Each topic updates its slice of world state and
+   then hands off to the HUD + scene update functions.
+   ================================================================== */
+
+function onTopic(topic, p) {
+  switch (topic) {
+    case PREFIX + '/state_vectors':
+    case PREFIX + '/target/state_vectors':
+    case PREFIX + '/attitude':
+    case PREFIX + '/target/attitude':
+    case PREFIX + '/vehicle':
+    case PREFIX + '/target/vehicle':
+    case PREFIX + '/docking/context':
+      // Anything that changes relative pose or docking state triggers
+      // a HUD recompute. The scene render loop handles visuals every
+      // frame independently.
+      updateHud();
+      break;
+  }
+}
+
+/* ==================================================================
+   Three.js scene. Placeholder boxes for v1. Follow-up will swap the
+   boxes for KSPEVU-loaded glbs keyed by persistentId from the
+   vessel_model/ready topics.
+   ================================================================== */
+
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(window.devicePixelRatio);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+camera.position.set(0, 0, 25);
+camera.lookAt(0, 0, 0);
+
+// Lighting: one key, one fill, one rim. Keeps the boxes readable
+// without hiding orientation cues.
+scene.add(new THREE.AmbientLight(0x202028, 1.0));
+const key = new THREE.DirectionalLight(0xffffff, 1.2);
+key.position.set(5, 8, 3);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x4a9eff, 0.4);
+rim.position.set(-5, -2, -6);
+scene.add(rim);
+
+// Own-ship placeholder: a blue box with a nose-direction marker.
+// The nose-marker is a cylinder pointing along the part's +Y axis
+// (Unity convention — ReferenceTransform.up is the nose).
+const ownGroup = new THREE.Group();
+{
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(1.5, 3, 1.5),
+    new THREE.MeshStandardMaterial({ color: 0x4a9eff, roughness: 0.4 })
+  );
+  ownGroup.add(box);
+  const nose = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.2, 0.6, 1.2, 16),
+    new THREE.MeshStandardMaterial({ color: 0x22d3ee, roughness: 0.3 })
+  );
+  nose.position.y = 2.1;
+  ownGroup.add(nose);
+}
+scene.add(ownGroup);
+
+// Target placeholder: a larger white box so it's visually distinct.
+const tgtGroup = new THREE.Group();
+{
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(3, 5, 3),
+    new THREE.MeshStandardMaterial({ color: 0xe8edf5, roughness: 0.5 })
+  );
+  tgtGroup.add(box);
+  const nose = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 1.0, 1.5, 16),
+    new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.3 })
+  );
+  nose.position.y = 3.2;
+  tgtGroup.add(nose);
+}
+tgtGroup.position.set(0, 0, -50);
+scene.add(tgtGroup);
+
+// Starfield — tiny, dim points so the scene isn't a void. Purely
+// decorative; has no telemetric meaning.
+{
+  const starCount = 800;
+  const geom = new THREE.BufferGeometry();
+  const positions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount; i++) {
+    const r = 900 + Math.random() * 100;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+    positions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i*3+2] = r * Math.cos(phi);
+  }
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  scene.add(new THREE.Points(geom, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.8, sizeAttenuation: false, transparent: true, opacity: 0.4,
+  })));
+}
+
+function resize() {
+  const w = canvas.clientWidth = window.innerWidth;
+  const h = canvas.clientHeight = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ==================================================================
+   Coordinate conversion. KSPBridge publishes state_vectors and
+   attitude quaternions in Unity's LEFT-HANDED, Y-up world frame.
+   Three.js is RIGHT-HANDED, Y-up. Conversion:
+     position  : (x, y, z) -> (x, y, -z)
+     rotation  : (qx, qy, qz, qw) -> (-qx, -qy, qz, qw)
+   This is the same swap documented in state_vectors and the KSPEVU
+   glb writer — applied consistently everywhere.
+   ================================================================== */
+
+function vecUnityToThree(u) {
+  return new THREE.Vector3(u[0], u[1], -u[2]);
+}
+function quatUnityToThree(q) {
+  return new THREE.Quaternion(-q[0], -q[1], q[2], q[3]);
+}
+
+/* ==================================================================
+   HUD update. Reads the latest telemetry, computes relative pose,
+   writes values to the DOM and updates the scene pose.
+   ================================================================== */
+
+const hud = {
+  roRoll:       document.querySelector('#ro-roll'),
+  roPitch:      document.querySelector('#ro-pitch'),
+  roPyrP:       document.querySelector('#ro-pyr [data-k="p"]'),
+  roPyrY:       document.querySelector('#ro-pyr [data-k="y"]'),
+  roPyrR:       document.querySelector('#ro-pyr [data-k="r"]'),
+  roRange:      document.querySelector('#ro-range'),
+  roRangeRate:  document.querySelector('#ro-range-rate'),
+  ownMark:      document.querySelector('#ownMark'),
+  statePill:    document.querySelector('#state-pill'),
+  rangeTag:     document.querySelector('#range-tag'),
+  chevronL:     document.querySelector('.chevron.left'),
+  chevronR:     document.querySelector('.chevron.right'),
+  chevronU:     document.querySelector('.chevron.up'),
+  chevronD:     document.querySelector('.chevron.down'),
+};
+
+// Write a cardinal readout (ROLL / PITCH / RANGE / RANGE_RATE).
+// container is the .readout div; big + small are the two lines.
+function setDual(container, bigText, smallText) {
+  container.querySelector('.big').textContent = bigText;
+  container.querySelector('.small').textContent = smallText;
+}
+
+// Rate helpers. Cache previous value per metric and return the
+// per-second delta. First call returns 0 (no previous value yet).
+function rate(key, value, now) {
+  const p = prev[key];
+  prev[key] = { v: value, t: now };
+  if (p == null) return 0;
+  const dt = (now - p.t) / 1000;
+  if (dt <= 0) return 0;
+  return (value - p.v) / dt;
+}
+
+function updateHud() {
+  const own   = latest[PREFIX + '/state_vectors']?.payload;
+  const tgt   = latest[PREFIX + '/target/state_vectors']?.payload;
+  const ownAtt = latest[PREFIX + '/attitude']?.payload;
+  const tgtAtt = latest[PREFIX + '/target/attitude']?.payload;
+  const ctx   = latest[PREFIX + '/docking/context']?.payload;
+
+  // Docking context lifecycle pill, and disable chevrons if not
+  // actively armed / approaching.
+  if (ctx && typeof ctx === 'object') {
+    hud.statePill.textContent = (ctx.state || 'IDLE').toUpperCase();
+  }
+
+  // --- Own attitude readouts ---------------------------------------
+  // Heading/pitch/roll are published in radians. Converting to
+  // degrees here; rate is computed per second from the raw radian
+  // value for stability (degree rounding would noise up the rate).
+  const now = Date.now();
+  if (ownAtt) {
+    const roll = ownAtt.roll * (180 / Math.PI);
+    const pitch = ownAtt.pitch * (180 / Math.PI);
+    const rollRate = rate('roll', ownAtt.roll, now) * (180 / Math.PI);
+    const pitchRate = rate('pitch', ownAtt.pitch, now) * (180 / Math.PI);
+    setDual(hud.roRoll,  fmt(roll, 1) + '°', fmtSigned(rollRate, 1) + '°/s');
+    setDual(hud.roPitch, fmt(pitch, 1) + '°', fmtSigned(pitchRate, 1) + '°/s');
+
+    // Pose own ship in the scene from its quaternion. Treat own
+    // ship as scene origin — target position is relative to own.
+    ownGroup.quaternion.copy(quatUnityToThree([
+      ownAtt.rotationX, ownAtt.rotationY, ownAtt.rotationZ, ownAtt.rotationW,
+    ]));
+  }
+
+  // --- Target attitude + PYR stack ---------------------------------
+  if (tgtAtt) {
+    hud.roPyrP.textContent = fmt(tgtAtt.pitch   * (180/Math.PI), 1) + '°';
+    hud.roPyrY.textContent = fmt(tgtAtt.heading * (180/Math.PI), 1) + '°';
+    hud.roPyrR.textContent = fmt(tgtAtt.roll    * (180/Math.PI), 1) + '°';
+
+    // Pose target ship. Full pose (pos + rot) applied below once we
+    // have relative position.
+    tgtGroup.quaternion.copy(quatUnityToThree([
+      tgtAtt.rotationX, tgtAtt.rotationY, tgtAtt.rotationZ, tgtAtt.rotationW,
+    ]));
+  }
+
+  // --- Relative pose: range + range rate ---------------------------
+  if (own && tgt) {
+    const dx = tgt.positionX - own.positionX;
+    const dy = tgt.positionY - own.positionY;
+    const dz = tgt.positionZ - own.positionZ;
+    const range = Math.hypot(dx, dy, dz);
+
+    // Closing rate: velocity of target minus own along the
+    // unit range vector. Positive range rate = opening,
+    // negative = closing. Crew Dragon shows the signed value with
+    // its sign; we follow that convention.
+    const rvx = tgt.velocityX - own.velocityX;
+    const rvy = tgt.velocityY - own.velocityY;
+    const rvz = tgt.velocityZ - own.velocityZ;
+    const rangeDot = (dx*rvx + dy*rvy + dz*rvz) / (range || 1);
+
+    setDual(hud.roRange, fmtRange(range), fmtRange(prev.range?.v ?? range));
+    setDual(hud.roRangeRate,
+      fmtSigned(rangeDot, 2) + ' m/s',
+      fmtSigned(prev.rangeRate?.v ?? rangeDot, 2) + ' m/s');
+    prev.range     = { v: range,     t: now };
+    prev.rangeRate = { v: rangeDot,  t: now };
+
+    // Scene placement: own at origin, target at the relative vector
+    // (converted to Three.js handedness).
+    const rel = vecUnityToThree([dx, dy, dz]);
+    tgtGroup.position.copy(rel);
+
+    // Zoom camera to fit: sit roughly 2.5× the range behind own
+    // looking toward target. For very close range (<30 m), clamp to
+    // a minimum so we don't get inside the boxes.
+    const camDist = Math.max(30, range * 2.5);
+    camera.position.copy(rel.clone().normalize().multiplyScalar(-camDist));
+    camera.lookAt(rel);
+
+    // Range tag bottom-right corner, free-standing number.
+    hud.rangeTag.textContent = fmtRange(range);
+  } else {
+    hud.rangeTag.textContent = '';
+  }
+}
+
+/* ==================================================================
+   Number formatters — tabular, consistent precision.
+   ================================================================== */
+
+function fmt(n, dp = 2) {
+  if (!isFinite(n)) return '—';
+  return n.toFixed(dp);
+}
+function fmtSigned(n, dp = 2) {
+  if (!isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(dp);
+}
+function fmtRange(m) {
+  if (!isFinite(m)) return '—';
+  if (m < 1000) return m.toFixed(2) + ' m';
+  return (m / 1000).toFixed(2) + ' km';
+}
+
+/* ==================================================================
+   Debug panel. Renders every observed topic's latest payload with an
+   age indicator. Toggle visibility with keyboard 'd'.
+   ================================================================== */
+
+const debugPanel = document.getElementById('debug');
+const debugGrid = document.getElementById('debugGrid');
+
+function refreshDebug() {
+  const topics = Object.keys(latest).sort();
+  const now = Date.now();
+  let html = '';
+  for (const t of topics) {
+    const { payload, ts } = latest[t];
+    const age = now - ts;
+    const staleClass = age > STALE_MS ? ' stale' : '';
+    const body = typeof payload === 'object'
+      ? JSON.stringify(payload, null, 0)
+      : String(payload);
+    html += '<div>'
+      + '<h4>' + t
+        + '<span class="age' + staleClass + '">' + age + ' ms</span>'
+      + '</h4>'
+      + '<pre>' + escapeHtml(body) + '</pre>'
+      + '</div>';
+  }
+  debugGrid.innerHTML = html || '<pre>Waiting for topics...</pre>';
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+}
+setInterval(refreshDebug, 200);
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'd' || e.key === 'D') {
+    debugPanel.classList.toggle('hidden');
+  }
+});
+
+/* ==================================================================
+   Render loop. Independent of telemetry cadence — Three.js renders
+   at 60 fps and the scene poses get updated by updateHud() whenever
+   a relevant topic arrives.
+   ================================================================== */
+
+function tick() {
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+tick();
+  </script>
+</body>
+</html>
