@@ -65,6 +65,18 @@ namespace KSPBridge.Telemetry
                 new ManeuverProducer(),
                 new EncounterProducer(),
                 new PerformanceProducer(),
+
+                // Target-vessel telemetry. Each of these publishes only
+                // when the active vessel has a vessel-bearing target
+                // selected; otherwise their Build() returns null and the
+                // scheduler silently skips the tick. Schema matches the
+                // corresponding active-vessel topic, so a console that
+                // understands vehicle / state_vectors / attitude can
+                // consume the target/* variants with zero extra parsing.
+                new TargetVehicleProducer(),
+                new TargetStateVectorsProducer(),
+                new TargetAttitudeProducer(),
+
                 // Future producers added here — one line per topic.
             };
         }

@@ -209,6 +209,45 @@ or pre-staging) are filtered to 0.
 
 ---
 
+## `target/vehicle`, `target/state_vectors`, `target/attitude` - 10 Hz
+
+Target-vessel mirror of the corresponding active-vessel topics. Each
+publishes only when the active vessel has a *vessel-bearing* target
+selected — i.e., another vessel or a specific `ModuleDockingNode`.
+Celestial-body targets and self-targeting are filtered out.
+
+**Payloads are byte-for-byte identical to their active-vessel counterparts.**
+A browser console that already parses `vehicle`, `state_vectors`, and
+`attitude` can subscribe to the `target/*` variants with zero additional
+parsing code — same fields, same units, same semantics.
+
+Silent when no target is selected (no message published, not a zeroed
+message). Consumers should treat absence of a recent `target/*` message
+as "no target selected" and hide target-related UI accordingly.
+
+Frames of reference:
+
+- `target/state_vectors` position and velocity are in the **target's
+  own parent-body** inertial (CCI) frame, NOT the active vessel's. In
+  docking scenarios both vessels are always in the same SOI (you can't
+  physically dock across an SOI boundary), but general target telemetry
+  may see cross-SOI cases. Consumers computing relative pose should
+  compare `vehicle.parentBody` vs `target/vehicle.parentBody` before
+  subtracting state vectors.
+- `target/attitude` HPR fields are in the target's own local surface
+  frame and are of limited use to an external observer. The
+  `rotationX/Y/Z/W` quaternion is the field that matters for posing
+  the target's glb in an external 3D renderer.
+- `target/vehicle.speed` is the target's own orbital speed, not the
+  closing speed between active and target. Compute closing speed
+  client-side from the two state_vectors.
+
+The `id` and `persistentId` correlation fields describe the target
+vessel, not the active one — use them to look up the target's KSPEVU
+glb at `/vessel/<hash>.glb` when rendering.
+
+---
+
 ## Not yet implemented
 
 The following topics are defined in the KSA-Bridge schema and may be added
