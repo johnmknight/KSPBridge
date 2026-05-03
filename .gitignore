@@ -2,6 +2,10 @@
 bin/
 obj/
 
+# Release staging (zips assembled for GitHub release uploads)
+_release/
+_release_stage/
+
 # Visual Studio / Rider / JetBrains
 .vs/
 .idea/
