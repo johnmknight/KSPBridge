@@ -66,6 +66,57 @@ if (-not $version) {
     throw "Could not read <Version> from $csproj"
 }
 
+# Regenerate the KSP-AVC .version file from csproj so VERSION,
+# KSP-AVC, and the assembly version are guaranteed to agree.
+# KSP-AVC (the in-game updater) and CKAN both consume this file;
+# the URL field below is what KSP-AVC fetches to check for updates,
+# so the file MUST be committed to master for the URL to resolve.
+# We treat the in-tree copy as build output: regenerate every
+# release, commit the result alongside the version bump.
+$versionJsonPath = Join-Path $repo 'GameData\KSPBridge\KSPBridge.version'
+$semverParts = $version.Split('.')
+if ($semverParts.Count -lt 3) {
+    throw "Version '$version' is not in MAJOR.MINOR.PATCH form"
+}
+$versionJson = @"
+{
+  "NAME": "KSPBridge",
+  "URL": "https://raw.githubusercontent.com/johnmknight/KSPBridge/master/GameData/KSPBridge/KSPBridge.version",
+  "DOWNLOAD": "https://github.com/johnmknight/KSPBridge/releases",
+  "GITHUB": {
+    "USERNAME": "johnmknight",
+    "REPOSITORY": "KSPBridge",
+    "ALLOW_PRE_RELEASE": false
+  },
+  "VERSION": {
+    "MAJOR": $($semverParts[0]),
+    "MINOR": $($semverParts[1]),
+    "PATCH": $($semverParts[2]),
+    "BUILD": 0
+  },
+  "KSP_VERSION": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 5
+  },
+  "KSP_VERSION_MIN": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 0
+  },
+  "KSP_VERSION_MAX": {
+    "MAJOR": 1,
+    "MINOR": 12,
+    "PATCH": 5
+  }
+}
+"@
+# Use UTF-8 without BOM — KSP-AVC has historically been finicky
+# about UTF-8 BOM in version files, and CKAN's parser is strict
+# JSON which trips on the BOM byte sequence.
+[System.IO.File]::WriteAllText($versionJsonPath, $versionJson, (New-Object System.Text.UTF8Encoding $false))
+Write-Host "Regenerated KSPBridge.version for v$version"
+
 # Locate dotnet. Prefer PATH; fall back to the canonical install path.
 # Some launching contexts (notably automation that spawns a fresh
 # powershell.exe with a stripped PATH) won't have dotnet on PATH even
@@ -130,6 +181,15 @@ foreach ($f in $required) {
 # Settings.cfg sits at the mod folder root — same convention as
 # every other KSP mod that ships a default config.
 Copy-Item (Join-Path $repo 'GameData\KSPBridge\Settings.cfg') $ksprModDir
+
+# KSP-AVC version file sits at the mod folder root. KSP-AVC (the
+# in-game add-on version checker) and CKAN both look for
+# GameData/<ModName>/<ModName>.version and read its KSP_VERSION /
+# KSP_VERSION_MIN / KSP_VERSION_MAX block to decide whether the
+# mod is compatible with the user's KSP install. We just
+# regenerated this file from csproj above so it's guaranteed
+# to match the assembly version.
+Copy-Item (Join-Path $repo 'GameData\KSPBridge\KSPBridge.version') $ksprModDir
 
 # LICENSE + third-party notices live INSIDE GameData/KSPBridge/.
 # This is the KSP-mod-standard placement so the user's KSP install

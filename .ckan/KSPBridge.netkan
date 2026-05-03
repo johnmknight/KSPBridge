@@ -1,0 +1,33 @@
+{
+    "spec_version": "v1.4",
+    "identifier": "KSPBridge",
+    "$kref": "#/ckan/github/johnmknight/KSPBridge",
+    "$vref": "#/ckan/ksp-avc",
+    "name": "KSPBridge",
+    "abstract": "MQTT telemetry bridge for Kerbal Space Program 1.12.5 - publishes vessel state over MQTT for browsers, scripts, ESP32s, Grafana, or any subscriber.",
+    "description": "KSPBridge is the KSP 1.x companion to KSA-Bridge. It runs as an in-game plugin and publishes 18 telemetry topics (vessel, navigation, orbit, attitude with full Unity quaternion, state vectors, parent body, maneuver plan, SOI encounters, performance/dV/TWR, target tracking trio, docking context, dynamics, resources, situation, atmosphere, staging) over MQTT to any reachable broker. The wire format mirrors KSA-Bridge's exactly so existing KSA-Bridge subscribers work with only a topic-prefix change. Two extra correlation fields (id, persistentId) are added so consumers can key telemetry to specific vessels reliably.",
+    "author": "John M. Knight",
+    "license": "MIT",
+    "release_status": "stable",
+    "ksp_version_min": "1.12.0",
+    "ksp_version_max": "1.12.5",
+    "tags": [
+        "plugin",
+        "library",
+        "physics",
+        "information"
+    ],
+    "depends": [],
+    "install": [
+        {
+            "find": "KSPBridge",
+            "install_to": "GameData"
+        }
+    ],
+    "resources": {
+        "homepage": "https://github.com/johnmknight/KSPBridge",
+        "repository": "https://github.com/johnmknight/KSPBridge",
+        "bugtracker": "https://github.com/johnmknight/KSPBridge/issues"
+    },
+    "x_netkan_version_edit": "^v(?<version>.+)$"
+}
