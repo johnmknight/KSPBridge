@@ -7,13 +7,31 @@ Grafana, or any MQTT subscriber can consume real-time flight data. Wire format
 matches KSA-Bridge's topic names and JSON schemas, so consoles and dashboards
 built for one game work against the other with only a topic-prefix change.
 
-## Status — v0.11.0
+## Status — v0.14.0
 
-**Nine telemetry topics shipping.** The hard-scifi FDO console included in
-this repo lights up end-to-end: vessel identification, orbital elements,
-state vectors, navigation readouts, attitude, maneuver plan, SOI encounters,
-performance (ΔV / TWR), and live planet rotation all populate from real game
-data.
+**Thirteen telemetry topics shipping.** The hard-scifi FDO console included
+in this repo lights up end-to-end: vessel identification, orbital elements,
+state vectors, navigation readouts, attitude (with full Unity quaternion),
+maneuver plan, SOI encounters, performance (ΔV / TWR), and live planet
+rotation all populate from real game data.
+
+Since v0.11 the bridge has added:
+
+- **Quaternion attitude.** The `attitude` payload now carries
+  `rotationX/Y/Z/W` — the vessel root transform's full Unity
+  quaternion. External 3D renderers can pose a vessel as a rigid body
+  without re-deriving rotation from heading/pitch/roll.
+- **Target-vessel telemetry.** `target/vehicle`, `target/state_vectors`,
+  and `target/attitude` mirror the active-vessel topics whenever a
+  vessel-bearing target is selected. Schemas are byte-for-byte
+  identical to the active-vessel versions, so consoles built for the
+  active vessel work for the target with zero parsing changes.
+- **Docking context.** `docking/context` is a retained, 1 Hz lifecycle
+  topic for docking scenarios. It reports controlling/target docking
+  ports by `persistentId` + module index, plus a coarse engagement
+  state (`idle` / `armed` / `soft_dock` / `hard_dock` / `disabled`).
+  Late subscribers see the current state immediately thanks to MQTT
+  retention.
 
 The console is **body-aware** for every stock world. When the active vessel
 transitions between SOIs, the globe swaps to the appropriate body's vector
@@ -36,8 +54,6 @@ Surface sources come from the stock game plus biome maps pulled from the
 Python pipeline converts every source image into a per-body `*_contours.js`
 asset with traced polygon rings and a colour palette, then the FDO console's
 `BODY_REGISTRY` wires each one to the globe renderer.
-
-Topics still on the backlog (no producers yet):
 
 Topics still on the backlog (no producers yet):
 
@@ -146,7 +162,7 @@ Edit `GameData/KSPBridge/Settings.cfg` in your KSP install:
 KSPBRIDGE
 {
     broker_host  = appserv1.local
-    broker_port  = 1883
+    broker_port  = 1884
     topic_prefix = ksp/telemetry
     client_id    = kspbridge
 }
