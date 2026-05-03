@@ -1,4 +1,4 @@
-# KSPBridge Topic Reference (v0.14.0)
+# KSPBridge Topic Reference (v0.15.0)
 
 All topics are published under the prefix configured in `Settings.cfg`
 (default `ksp/telemetry`). Examples below use that default.
@@ -29,7 +29,7 @@ Testament on unclean disconnect).
 | Field | Type | Meaning |
 |---|---|---|
 | `online` | bool | `true` while the bridge is connected; `false` on goodbye / LWT. |
-| `version` | string | Plugin version string, e.g. `"0.14.0"`. |
+| `version` | string | Plugin version string, e.g. `"0.15.0"`. |
 | `ts` | number | Unix epoch seconds at publish time. |
 
 ---
@@ -295,17 +295,151 @@ the target port on the target vessel's glb.
 
 ---
 
-## Not yet implemented
+## `dynamics` — 5 Hz
 
-The following topics are defined in the KSA-Bridge schema and may be added
-in future versions. They are NOT currently published.
+Body-frame rotational rates, linear and angular accelerations, and
+current g-load. Distinct from `state_vectors` (positional / inertial-frame
+velocity) and `attitude` (orientation): this topic captures the
+derivatives a pilot or autopilot cares about for stability and load
+monitoring.
 
-| Topic | Planned rate | Notes |
+Body axes follow KSP's vessel transform convention: x = right (pitch axis),
+y = up / cockpit-roof (yaw axis), z = forward / out-the-nose (roll axis).
+
+| Field | Type | Units | Source |
+|---|---|---|---|
+| `bodyRatePitch` | number | rad/s | `Vessel.angularVelocity.x` |
+| `bodyRateYaw` | number | rad/s | `Vessel.angularVelocity.y` |
+| `bodyRateRoll` | number | rad/s | `Vessel.angularVelocity.z` |
+| `linearAccelX` | number | m/s² | `Vessel.acceleration` projected into the controlling part's local frame, x |
+| `linearAccelY` | number | m/s² | same, y |
+| `linearAccelZ` | number | m/s² | same, z |
+| `linearAccelMag` | number | m/s² | `Vessel.acceleration.magnitude` (frame-independent) |
+| `gForce` | number | g | `Vessel.geeForce` — matches the stock G-meter exactly |
+| `angularAccelPitch` | number | rad/s² | finite difference of `bodyRatePitch` |
+| `angularAccelYaw` | number | rad/s² | finite difference of `bodyRateYaw` |
+| `angularAccelRoll` | number | rad/s² | finite difference of `bodyRateRoll` |
+
+The angular acceleration fields are computed by differencing the previous
+tick's `angularVelocity` against the current tick. The first sample after
+a vessel switch or scene gap emits 0 rather than a spurious spike from
+differencing across two unrelated samples.
+
+---
+
+## `resources` — 2 Hz
+
+Vessel-wide totals (wet/dry/resource mass) plus a per-resource breakdown
+aggregated across every part. A six-tank rocket reads as one entry per
+resource type, matching what a pilot sees in the stock resource panel.
+All mass-bearing fields use **kilograms** (KSP internally uses tons; the
+producer multiplies by 1000 before emitting).
+
+| Field | Type | Units | Meaning |
+|---|---|---|---|
+| `wetMass` | number | kg | Total vessel mass (`Vessel.totalMass * 1000`). |
+| `dryMass` | number | kg | `wetMass - resourceMass`, clamped at zero. |
+| `resourceMass` | number | kg | Sum of `mass` over `resources[]`. |
+| `resources` | array | — | Per-resource breakdown; see schema below. |
+
+### `resources[]` entry
+
+| Field | Type | Units | Meaning |
+|---|---|---|---|
+| `name` | string | — | Canonical resource name (`"LiquidFuel"`, `"Oxidizer"`, `"MonoPropellant"`, `"ElectricCharge"`, `"XenonGas"`, `"Ore"`, etc.). Matches `PartResourceDefinition.name`. |
+| `amount` | number | resource units | Current amount aggregated across all parts. |
+| `maxAmount` | number | resource units | Total capacity across all parts. |
+| `density` | number | kg / unit | Mass per resource unit. KSP stores this as t/unit; converted on the wire so all mass-y fields share kg as their unit. |
+| `mass` | number | kg | `amount * density`, pre-computed for consumer convenience. |
+
+Zero-amount resources are emitted whenever any part lists the resource
+definition, so consumers see capacity even when empty.
+
+---
+
+## `situation` — 1 Hz
+
+Expanded form of `Vessel.situation`. The single enum value is split into
+one boolean per state plus two convenience derived flags. The string
+form is also emitted so consumers can use this topic as a self-contained
+source of situation truth without also subscribing to `vehicle`.
+
+At any moment exactly one of `landed` / `splashed` / `prelaunch` /
+`flying` / `subOrbital` / `orbiting` / `escaping` / `docked` is true.
+
+| Field | Type | Meaning |
 |---|---|---|
-| `dynamics` | 2 Hz | Body rates, linear acceleration, angular acceleration. |
-| `resources` | 2 Hz | Per-resource masses (LiquidFuel, Oxidizer, ElectricCharge, etc.). |
-| `situation` | 2 Hz | Expanded bit flags (landed / splashed / flying / docked). |
-| `atmosphere` | 2 Hz | Static pressure, density, temperature. |
+| `situation` | string | One of LANDED / SPLASHED / PRELAUNCH / FLYING / SUB_ORBITAL / ORBITING / ESCAPING / DOCKED. Identical to `vehicle.situation`. |
+| `landed` | bool | On solid ground. |
+| `splashed` | bool | In liquid. |
+| `prelaunch` | bool | On launchpad / runway. |
+| `flying` | bool | In atmospheric flight (not orbiting, not on ground). |
+| `subOrbital` | bool | On a sub-orbital trajectory. |
+| `orbiting` | bool | On a closed (bound) orbit. |
+| `escaping` | bool | On a hyperbolic / escape trajectory. |
+| `docked` | bool | This vessel is docked into a larger physical assembly. |
+| `onSurface` | bool | Convenience: `landed \|\| splashed \|\| prelaunch`. |
+| `inAtmosphere` | bool | `Vessel.atmDensity > 0` — true iff there's measurable air at the vessel's altitude. Always false on airless bodies. |
+| `controllable` | bool | `Vessel.IsControllable` — at least one functional command source plus, if enabled, satisfied comms requirements. |
+
+---
+
+## `atmosphere` — 5 Hz
+
+Atmospheric environment around the vessel: density, pressures,
+temperatures, Mach, plus parent-body atmosphere context flags.
+Pressures are in **kilopascals** (KSP's native unit); 1 atm ≈ 101.325 kPa.
+Temperatures are in **kelvin**.
+
+| Field | Type | Units | Source / Meaning |
+|---|---|---|---|
+| `density` | number | kg/m³ | `Vessel.atmDensity` — 0 in vacuum and on airless bodies. |
+| `staticPressure` | number | kPa | `Vessel.staticPressurekPa`. |
+| `dynamicPressure` | number | kPa | `Vessel.dynamicPressurekPa` — the "Q" pilots monitor for max-Q during ascent. |
+| `atmosphereTemperature` | number | K | `Vessel.atmosphericTemperature` — ambient air temperature, independent of vessel motion. |
+| `externalTemperature` | number | K | `Vessel.externalTemperature` — includes aerodynamic / re-entry heating; reads above `atmosphereTemperature` when moving fast through dense atmosphere. |
+| `mach` | number | — | `Vessel.mach`. 0 in vacuum. |
+| `inAtmosphere` | bool | — | True iff `density > 0`. |
+| `bodyHasAtmosphere` | bool | — | True iff parent body has any atmosphere at all (`CelestialBody.atmosphere`). |
+| `atmosphereDepth` | number | m | Top of the parent body's atmosphere above mean surface. 0 on airless bodies. |
+
+---
+
+## `staging` — 1 Hz, retained
+
+Describes the staging stack from a "what fires when the pilot next
+presses space?" point of view, rather than enumerating every part by
+inverseStage. Two stage-groups are reported: the **next-to-fire** stage
+(`inverseStage == Vessel.currentStage`) and the **following** stage
+(`inverseStage == Vessel.currentStage - 1`).
+
+Retained on the broker so a late subscriber sees the current
+ready-to-fire state immediately rather than waiting for the next
+1 Hz tick.
+
+KSP staging convention: stage 0 is the final / payload stage with
+nothing left to fire; `currentStage` is the stage about to fire on the
+next staging event; firing it decrements the value.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `currentStage` | number | `Vessel.currentStage`. |
+| `stagesRemaining` | number | Staging events still possible — `currentStage + 1` (counts down through 0 inclusive). |
+| `partsInNextStage` | number | Total parts at `inverseStage == currentStage`. |
+| `enginesInNextStage` | number | Subset that have a `ModuleEngines` (will ignite). |
+| `decouplersInNextStage` | number | Subset with `ModuleDecouple` or `ModuleAnchoredDecoupler` (will release). |
+| `partsInNextStageNames` | array of string | Display titles (`part.partInfo.title`) of every part in the next stage. |
+| `partsInFollowingStage` | number | Same metric for `inverseStage == currentStage - 1`. |
+| `enginesInFollowingStage` | number | — |
+| `decouplersInFollowingStage` | number | — |
+| `partsInFollowingStageNames` | array of string | — |
+
+The implementation is poll-based at 1 Hz rather than hooked to
+`GameEvents.onStageActivate`. Retention covers the late-subscriber case;
+1 Hz is faster than human reaction time for any subscriber that's
+already connected. If sub-second freshness ever matters for an
+automated subscriber, the producer is upgrade-compatible with an event
+hook in the plugin entry point.
 
 ---
 

@@ -7,15 +7,39 @@ Grafana, or any MQTT subscriber can consume real-time flight data. Wire format
 matches KSA-Bridge's topic names and JSON schemas, so consoles and dashboards
 built for one game work against the other with only a topic-prefix change.
 
-## Status — v0.14.0
+## Status — v0.15.0
 
-**Thirteen telemetry topics shipping.** The hard-scifi FDO console included
-in this repo lights up end-to-end: vessel identification, orbital elements,
-state vectors, navigation readouts, attitude (with full Unity quaternion),
-maneuver plan, SOI encounters, performance (ΔV / TWR), and live planet
-rotation all populate from real game data.
+**Eighteen telemetry topics shipping — full KSA-Bridge schema parity.**
+The hard-scifi FDO console included in this repo lights up end-to-end:
+vessel identification, orbital elements, state vectors, navigation
+readouts, attitude (with full Unity quaternion), maneuver plan, SOI
+encounters, performance (ΔV / TWR), and live planet rotation all
+populate from real game data.
 
-Since v0.11 the bridge has added:
+v0.15 closes out the original KSA-Bridge schema backlog by adding the
+last five planned topics:
+
+- **`dynamics`** (5 Hz) — body-frame angular velocity (pitch/yaw/roll
+  rates), body-frame linear acceleration, finite-differenced angular
+  acceleration, and current g-load (sourced from `Vessel.geeForce` so
+  it matches the stock G-meter exactly).
+- **`resources`** (2 Hz) — wet/dry/resource mass plus a per-resource
+  breakdown aggregated across every part on the vessel. One entry per
+  resource type (LiquidFuel, Oxidizer, MonoPropellant, ElectricCharge,
+  …) with current amount, capacity, density, and pre-computed mass.
+- **`situation`** (1 Hz) — the eight `Vessel.situation` enum values
+  expanded into individual booleans (`landed`, `splashed`,
+  `prelaunch`, `flying`, `subOrbital`, `orbiting`, `escaping`,
+  `docked`) plus derived flags (`onSurface`, `inAtmosphere`,
+  `controllable`).
+- **`atmosphere`** (5 Hz) — atmospheric density, static and dynamic
+  pressure, ambient and external (heated) temperature, Mach number,
+  and parent-body atmosphere context flags.
+- **`staging`** (1 Hz, retained) — what fires on the next staging
+  event: parts-, engine-, and decoupler-counts plus part display
+  titles for both the next-to-fire stage and the one after that.
+
+Since v0.11 the bridge has also added:
 
 - **Quaternion attitude.** The `attitude` payload now carries
   `rotationX/Y/Z/W` — the vessel root transform's full Unity
@@ -55,16 +79,9 @@ Python pipeline converts every source image into a per-body `*_contours.js`
 asset with traced polygon rings and a colour palette, then the FDO console's
 `BODY_REGISTRY` wires each one to the globe renderer.
 
-Topics still on the backlog (no producers yet):
-
-- `dynamics` — body rates, linear & angular acceleration
-- `resources` — propellant masses, total vehicle mass
-- `situation` — expanded landed/splashed/flying bit flags
-- `atmosphere` — density, static pressure, temperature
-- `staging` — next-stage / upcoming-stage composition (event-driven)
-
-See [docs/TOPICS.md](docs/TOPICS.md) for the full authoritative schema
-reference for every currently published topic.
+All KSA-Bridge schema topics now have producers. See
+[docs/TOPICS.md](docs/TOPICS.md) for the full authoritative schema
+reference for every published topic.
 
 ## Architecture at a glance
 

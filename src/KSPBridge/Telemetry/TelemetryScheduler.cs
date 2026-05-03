@@ -84,6 +84,22 @@ namespace KSPBridge.Telemetry
                 // dynamics.
                 new DockingContextProducer(),
 
+                // v0.15 backlog completion: the five remaining KSA-Bridge
+                // schema topics. Rates spread across the 10 Hz / 5 Hz /
+                // 2 Hz / 1 Hz divisor ladder based on how fast each
+                // topic's underlying values realistically change.
+                //
+                // dynamics: 5 Hz body rates + accelerations + g-load.
+                // resources: 2 Hz vessel-wide propellant aggregation.
+                // situation: 1 Hz expanded enum bit flags.
+                // atmosphere: 5 Hz density / pressure / temperature / Mach.
+                // staging: 1 Hz retained — what fires on next stage event.
+                new DynamicsProducer(),
+                new ResourcesProducer(),
+                new SituationProducer(),
+                new AtmosphereProducer(),
+                new StagingProducer(),
+
                 // Future producers added here — one line per topic.
             };
         }
