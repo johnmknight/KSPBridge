@@ -32,9 +32,34 @@ producers shipping.
   driven from csproj's `<Version>` property.
 - `GameData/KSPBridge/KSPBridge.version` — KSP-AVC / CKAN compatibility
   metadata. Regenerated on every release by `make-release.ps1`.
+- `scripts/install-check.ps1` (with `install-check.bat` wrapper) ships
+  inside `GameData/KSPBridge/` in the release zip. Walks ten
+  prerequisites (KSP install detected, plugin DLLs deployed,
+  KSPBridge.version parses, all four Settings.cfg fields valid, TCP
+  socket open to broker, MQTT publish/subscribe round-trip succeeds,
+  WebSocket listener reachable, FDO console assets present, Python
+  available, `python -m http.server` actually serves the console URL)
+  and prints pass/warn/fail per check with actionable remediation. On
+  successful runs it offers to launch a long-running `python -m
+  http.server` and open the FDO console in the browser with the
+  `?broker=` query-string override pre-filled from `Settings.cfg`.
+- `.ckan/KSPBridge.netkan` — CKAN indexer file ready for one-time
+  submission to `KSP-CKAN/CKAN-meta`. Uses `$kref` github + `$vref`
+  ksp-avc so the inflater bot auto-publishes new GitHub releases.
 - README "Installing" section with Steam path hint, extract step,
   Settings.cfg edit, and verification commands (KSP.log grep,
   `mosquitto_sub`).
+- README hero screenshot of the FDO console rendering live telemetry
+  (`docs/images/fdo-console.png`), recapped inside the Browser
+  console section.
+- `?broker=` query-string override on the FDO console
+  (`hardscifi-fdo-console.html` + `-cdn.html`) so the same source
+  file works against a homelab default OR a localhost test broker
+  without per-host edits.
+- `docs/RELEASING.md` maintainer release-process guide covering
+  scripted bump/build/package/publish steps plus an eight-item
+  smoke-test checklist that's now anchored on
+  `install-check.bat`.
 
 ### Changed
 
@@ -49,6 +74,15 @@ producers shipping.
   for WebSocket" — what's actually live.
 - `Plugin.Version` runtime constant aligned with `csproj` (`0.15.0`);
   `_bridge/status` payloads now report the matching version string.
+- csproj `DeployToKSP` post-build target now also copies
+  `KSPBridge.version`, `install-check.bat`, `install-check.ps1`,
+  `LICENSE`, and `THIRD-PARTY-NOTICES.md` to the deployed mod
+  folder. Previously a fresh `dotnet build` left those files
+  missing in the local install even though they shipped in the
+  release zip; now build-time deploy and the release zip layout
+  are identical. `Settings.cfg` retains its existing
+  copy-only-if-missing behaviour to preserve user customisations
+  across rebuilds.
 
 ## [0.14.0] — 2026-05-03
 
