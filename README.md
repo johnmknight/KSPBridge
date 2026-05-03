@@ -106,25 +106,40 @@ plugin lands in the right place.
 
 ### Verifying it works
 
-Two quick checks. First, KSP's own log:
+The release zip ships with `install-check.bat` (and a sibling
+`install-check.ps1`) inside `GameData/KSPBridge/`. Double-click
+`install-check.bat` — it walks every prerequisite and reports
+pass / warn / fail per check:
 
-```
-<KSP root>\KSP.log
-```
+1. KSP install detected
+2. Plugin DLLs deployed under `Plugins/`
+3. `KSPBridge.version` parses (KSP-AVC compat metadata)
+4. `Settings.cfg` present with all four required fields valid
+5. TCP socket open to `broker_host:broker_port`
+6. MQTT round-trip (publishes + subscribes a test message)
+7. WebSocket listener reachable (for the FDO browser console)
+8. FDO console HTML files present (only in source checkouts;
+   the release zip does not bundle the browser console)
+9. Python on PATH (used to serve the console)
+10. `python -m http.server` actually serves the console URL
 
-Look for `[KSPBridge]` lines — you should see the version banner, the
-broker target, and `MQTT connected to <host>:<port>`. If you see
-`MQTT connect failed:` instead, fix `Settings.cfg` and relaunch.
+Exit code is 0 when everything required passes, 1 otherwise.
+Warnings (e.g. WebSocket not configured, Python missing) are
+non-blocking — the plugin itself only needs items 1-6.
 
-Second, from any machine that can reach your broker, watch the topics:
+For a manual check, KSP's own log file at `<KSP root>\KSP.log`
+should contain `[KSPBridge]` lines: version banner, broker
+target, and `MQTT connected to <host>:<port>`. From any machine
+that can reach your broker:
 
 ```
 mosquitto_sub -h <broker_host> -p <broker_port> -t 'ksp/telemetry/#' -v
 ```
 
-In the flight scene you should see all 18 topics ticking on their
-respective rates. `_bridge/status` is retained — even outside the
-flight scene a fresh subscriber should see at least the heartbeat.
+In the flight scene you should see all 18 topics ticking on
+their respective rates. `_bridge/status` is retained — even
+outside the flight scene a fresh subscriber should see at
+least the heartbeat.
 
 ### Upgrading
 

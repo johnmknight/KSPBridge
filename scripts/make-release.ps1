@@ -197,6 +197,15 @@ Copy-Item (Join-Path $repo 'GameData\KSPBridge\KSPBridge.version') $ksprModDir
 Copy-Item (Join-Path $repo 'LICENSE') $ksprModDir
 Copy-Item (Join-Path $repo 'THIRD-PARTY-NOTICES.md') $ksprModDir
 
+# Ship the install verification script alongside the plugin so a
+# user who just extracted the zip can run install-check.bat and
+# get pass/warn/fail readouts for every prerequisite (KSP install,
+# DLLs deployed, Settings.cfg fields, broker reachable, MQTT
+# round-trip, WebSocket listener, console assets, web server).
+# Documented in the README's "Verifying it works" section.
+Copy-Item (Join-Path $repo 'scripts\install-check.ps1') $ksprModDir
+Copy-Item (Join-Path $repo 'scripts\install-check.bat') $ksprModDir
+
 # Materialise the zip. Use Compress-Archive's content-of-each-path
 # semantics: pass the staging dir's children explicitly so the
 # staging dir's own name doesn't end up inside the archive.

@@ -88,20 +88,43 @@
   </ItemGroup>
 
   <!--
-    Post-build: copy every DLL from output into the KSP GameData folder.
-    Using *.dll (rather than just $(AssemblyName).dll) ensures MQTTnet's
-    runtime DLLs ship alongside our plugin.
+    Post-build deploy. Three pieces land in the KSP install:
+
+      * Plugins/*.dll - our plugin plus its bundled MQTTnet runtime
+        DLLs. *.dll (rather than just $(AssemblyName).dll) sweeps in
+        every needed dependency the build emits.
+      * KSPBridge.version - the KSP-AVC compatibility manifest. Lives
+        at the mod folder root (not under Plugins/). Always overwritten
+        on build because it's a generated artifact whose contents are
+        owned by csproj's <Version> (regenerated explicitly by
+        scripts/make-release.ps1).
+      * Settings.cfg - copied ONLY if not already present at the
+        destination, so user customisations survive rebuilds. To force
+        a reset, delete Settings.cfg from the KSP install before
+        building.
   -->
   <Target Name="DeployToKSP" AfterTargets="Build">
     <ItemGroup>
-      <DeployFiles Include="$(OutputPath)*.dll" />
+      <DeployDlls Include="$(OutputPath)*.dll" />
+      <DeployVersion Include="$(MSBuildProjectDirectory)\..\..\GameData\KSPBridge\KSPBridge.version" />
+      <DeploySettings Include="$(MSBuildProjectDirectory)\..\..\GameData\KSPBridge\Settings.cfg"
+                      Condition="!Exists('$(KSPGameData)\Settings.cfg')" />
     </ItemGroup>
     <MakeDir Directories="$(KSPGameData)\Plugins" />
     <Copy
-      SourceFiles="@(DeployFiles)"
+      SourceFiles="@(DeployDlls)"
       DestinationFolder="$(KSPGameData)\Plugins"
       ContinueOnError="true" />
-    <Message Importance="high" Text="Deployed @(DeployFiles->'%(Filename)%(Extension)', ', ') to $(KSPGameData)\Plugins" />
+    <Copy
+      SourceFiles="@(DeployVersion)"
+      DestinationFolder="$(KSPGameData)"
+      ContinueOnError="true"
+      Condition="Exists('@(DeployVersion)')" />
+    <Copy
+      SourceFiles="@(DeploySettings)"
+      DestinationFolder="$(KSPGameData)"
+      ContinueOnError="true" />
+    <Message Importance="high" Text="Deployed @(DeployDlls->'%(Filename)%(Extension)', ', ') to $(KSPGameData)\Plugins" />
   </Target>
 
 </Project>

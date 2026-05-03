@@ -38,35 +38,31 @@ compiles against KSP's API, but it can't catch null-reference
 spam or broken telemetry math. Before announcing a release on
 the forum or in CKAN, run the manual smoke test below.
 
-### 1. Verify the deployed install
+### 1. Run install-check
 
-```powershell
-Get-ChildItem 'C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\KSPBridge' -Recurse |
-    Select-Object FullName, Length, LastWriteTime
+```cmd
+"C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\GameData\KSPBridge\install-check.bat"
 ```
 
-Expected after `make-release.ps1` runs: KSPBridge.dll +
-MQTTnet*.dll in `Plugins/`, and Settings.cfg + KSPBridge.version
-at the mod folder root.
+This is the same script that ships in the release zip for users.
+It walks every prerequisite and reports pass / warn / fail:
+KSP install, plugin DLLs deployed, `KSPBridge.version` parses,
+all four `Settings.cfg` fields valid, TCP socket open to the
+broker, MQTT round-trip succeeds, WebSocket listener reachable,
+FDO console assets present, Python available, `python -m
+http.server` actually serves the console URL.
 
-### 2. Start the broker on appserv1
+Exit code 0 means every required check passed. Anything else
+needs investigation before continuing — the script prints
+remediation steps for each failure.
 
-The homelab broker is configured for KSPBridge on TCP 1883 +
-WebSocket 9002. Confirm it's reachable:
+### 2. Subscribe to all topics
 
-```powershell
-Test-NetConnection -ComputerName appserv1.local -Port 1883
-Test-NetConnection -ComputerName appserv1.local -Port 9002
-```
-
-Both should report `TcpTestSucceeded : True`.
-
-### 3. Subscribe to all topics
-
-From any machine that can reach the broker:
+From any machine that can reach the broker (the install-check
+script already confirmed it's reachable):
 
 ```bash
-mosquitto_sub -h appserv1.local -p 1883 -t 'ksp/telemetry/#' -v
+mosquitto_sub -h <broker_host> -p <broker_port> -t 'ksp/telemetry/#' -v
 ```
 
 Leave it running. Initially you should see one
