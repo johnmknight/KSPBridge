@@ -1039,7 +1039,12 @@ function updateLabelProjections() {
 }
 
 // ── MQTT CONNECTION ─────────────────────────────────────────
-const client = mqtt.connect('ws://appserv1.local:9002');
+// Broker URL is overridable via the `?broker=` query param so the same
+// console file works against the homelab default OR a localhost smoke
+// test broker without editing source. Example:
+//   http://localhost:8000/hardscifi-fdo-console.html?broker=ws://localhost:9003
+const _brokerOverride = new URLSearchParams(window.location.search).get('broker');
+const client = mqtt.connect(_brokerOverride || 'ws://appserv1.local:9002');
 
 client.on('connect', () => {
   console.log('[FDO] Connected to KSA-Bridge MQTT broker');
