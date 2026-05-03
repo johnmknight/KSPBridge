@@ -439,15 +439,73 @@ Write-Host ("  Warn: $warns") -ForegroundColor Yellow
 Write-Host ("  Fail: $fails") -ForegroundColor Red
 Write-Host ""
 
-if ($fails -eq 0) {
-    Write-Host "KSPBridge is ready. Launch KSP and watch your subscriber." -ForegroundColor Green
-    if ($warns -gt 0) {
-        Write-Host "Warnings above are non-blocking - the plugin will work but" -ForegroundColor Yellow
-        Write-Host "the FDO browser console may not connect / KSP-AVC will not" -ForegroundColor Yellow
-        Write-Host "notify of updates / etc. Address them at your convenience." -ForegroundColor Yellow
-    }
-    exit 0
-} else {
+if ($fails -gt 0) {
     Write-Host "Address the failures above before launching KSP." -ForegroundColor Red
     exit 1
 }
+
+Write-Host "KSPBridge is ready. Launch KSP from Steam to start telemetering." -ForegroundColor Green
+if ($warns -gt 0) {
+    Write-Host "Warnings above are non-blocking - the plugin will work but" -ForegroundColor Yellow
+    Write-Host "the FDO browser console may not connect / KSP-AVC will not" -ForegroundColor Yellow
+    Write-Host "notify of updates / etc. Address them at your convenience." -ForegroundColor Yellow
+}
+
+# ---------------------------------------------------------------
+# Optional: launch the FDO console
+# ---------------------------------------------------------------
+# Offer to start a long-running http.server and open the browser
+# at the FDO console URL with the broker query-string override
+# pointing at the user's actual broker host. Only meaningful if
+# the prerequisites for the FDO console are already in place
+# (Python available, console assets present, WebSocket reachable).
+# Skip the prompt entirely otherwise so users in environments
+# that don't support the console aren't badgered with a
+# can't-do-it offer.
+$canLaunchConsole = $python -and $consoleDir -and `
+    (Test-Path (Join-Path $consoleDir 'hardscifi-fdo-console.html'))
+
+if ($canLaunchConsole) {
+    Write-Host ""
+    Write-Host "Open the FDO browser console now? It will start a small" -ForegroundColor Cyan
+    Write-Host "Python web server in a new window and open the console" -ForegroundColor Cyan
+    Write-Host "tab in your default browser. Close the server window to" -ForegroundColor Cyan
+    Write-Host "stop it. [y/N] " -ForegroundColor Cyan -NoNewline
+    $resp = Read-Host
+    # Default to NO so a non-interactive run (or a user who just
+    # presses Enter to skip) does not leave a stray http.server
+    # and browser tab behind. Explicit 'y' is required to launch.
+    if ($resp -match '^[Yy]') {
+        # Pick a free ephemeral port so we don't fight whatever
+        # the user might already have on 8000.
+        $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $consolePort = $listener.LocalEndpoint.Port
+        $listener.Stop()
+
+        # Spawn http.server in a visible window so the user can
+        # see request logs and close the window to terminate it.
+        # WindowStyle Normal (the default) keeps the cmd visible.
+        $consoleUrl = "http://localhost:$consolePort/hardscifi-fdo-console.html?broker=ws://${effHost}:${WebSocketPort}"
+        Start-Process -FilePath 'cmd.exe' `
+            -ArgumentList '/k', "title KSPBridge FDO console server (close to stop) && cd /d `"$consoleDir`" && `"$python`" -m http.server $consolePort"
+
+        # Briefly let the server bind before we tell the browser
+        # to fetch from it.
+        Start-Sleep -Milliseconds 800
+
+        Write-Host ""
+        Write-Host "FDO console URL: $consoleUrl" -ForegroundColor Green
+        Write-Host "Opening in your default browser..." -ForegroundColor Green
+        Start-Process $consoleUrl
+
+        Write-Host ""
+        Write-Host "Now launch KSP from Steam. Telemetry will flow into" -ForegroundColor Cyan
+        Write-Host "the console once you reach the flight scene." -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "When done, close the 'KSPBridge FDO console server'" -ForegroundColor DarkGray
+        Write-Host "window to stop the web server." -ForegroundColor DarkGray
+    }
+}
+
+exit 0
