@@ -12,7 +12,7 @@ built for one game work against the other with only a topic-prefix change.
 *The bundled hard-scifi FDO console rendering live telemetry from KSP — see
 [Browser console](#browser-console) for how to run it.*
 
-## Status — v0.15.0
+## Status — v0.15.1
 
 **Eighteen telemetry topics shipping — full KSA-Bridge schema parity.**
 The hard-scifi FDO console included in this repo lights up end-to-end:
@@ -103,9 +103,11 @@ plugin lands in the right place.
    The zip's `GameData/KSPBridge/` folder will land alongside KSP's
    built-in `GameData/Squad/` (and any other mods).
 3. **Edit `GameData/KSPBridge/Settings.cfg`** to point at your MQTT
-   broker. The shipped defaults (`appserv1.local:1883`, topic prefix
-   `ksp/telemetry`) target the author's homelab — almost certainly
-   not yours. See [Configuration](#configuration) below.
+   broker. The shipped defaults (`localhost:1883`, topic prefix
+   `ksp/telemetry`) work as-is if you run Mosquitto on the same
+   machine as KSP. For a remote broker (homelab, VM, cloud), set
+   `broker_host` to its hostname or IP. See
+   [Configuration](#configuration) below.
 4. **Launch KSP.** The plugin connects to the broker on startup and
    begins publishing as soon as you enter the flight scene.
 
@@ -254,15 +256,16 @@ Edit `GameData/KSPBridge/Settings.cfg` in your KSP install:
 ```
 KSPBRIDGE
 {
-    broker_host  = appserv1.local
+    broker_host  = localhost
     broker_port  = 1883
     topic_prefix = ksp/telemetry
     client_id    = kspbridge
 }
 ```
 
-Defaults target the author's homelab. Change `broker_host` and `broker_port`
-to match your own Mosquitto (or other MQTT broker).
+The defaults assume Mosquitto is running on the same machine as KSP.
+For a remote broker (homelab, VM, cloud), set `broker_host` to the
+broker's hostname or IP.
 
 ## Browser console
 

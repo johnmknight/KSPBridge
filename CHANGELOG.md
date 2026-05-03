@@ -5,6 +5,35 @@ All notable changes to KSPBridge are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] — 2026-05-03
+
+Patch release. Two corrections layered on the v0.15.0 schema-parity
+work, plus a clean tag for everything that landed in the v0.15.0
+zip after its tag was cut.
+
+### Changed
+
+- `broker_host` default switched from `appserv1.local` to `localhost`
+  in both `Settings.cs` (the runtime fallback) and the shipped
+  `Settings.cfg`. A fresh install now connects to a same-machine
+  Mosquitto out of the box. Remote-broker users (homelab, VM, cloud)
+  set `broker_host` to the broker's hostname or IP.
+- `Settings.cfg` comments revised to match: removed homelab-specific
+  references in favour of generic guidance about local vs remote
+  broker setups.
+- README's Installing and Configuration sections updated with the
+  new defaults.
+
+### Note
+
+The v0.15.1 tag points at a clean head that includes everything
+shipped in the v0.15.0 release zip plus the broker default change.
+The v0.15.0 tag captures only the schema-parity commit; nine
+post-tag commits (install-check, FDO console screenshot,
+csproj DeployToKSP fix, etc.) shipped in the v0.15.0 release zip
+but were not reflected in the tag. v0.15.1 fixes that drift —
+its tag and zip are byte-for-byte aligned.
+
 ## [0.15.0] — 2026-05-03
 
 First release with full KSA-Bridge schema parity. Eighteen telemetry
@@ -118,5 +147,6 @@ First public GitHub release. Thirteen telemetry producers.
   `navigation`, `attitude`, `state_vectors`, `orbit`, `parent_body`,
   `maneuver`, `encounter`.
 
+[0.15.1]: https://github.com/johnmknight/KSPBridge/releases/tag/v0.15.1
 [0.15.0]: https://github.com/johnmknight/KSPBridge/releases/tag/v0.15.0
 [0.14.0]: https://github.com/johnmknight/KSPBridge/releases/tag/v0.14.0

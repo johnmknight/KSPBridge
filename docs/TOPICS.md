@@ -1,4 +1,4 @@
-# KSPBridge Topic Reference (v0.15.0)
+# KSPBridge Topic Reference (v0.15.1)
 
 All topics are published under the prefix configured in `Settings.cfg`
 (default `ksp/telemetry`). Examples below use that default.
@@ -29,7 +29,7 @@ Testament on unclean disconnect).
 | Field | Type | Meaning |
 |---|---|---|
 | `online` | bool | `true` while the bridge is connected; `false` on goodbye / LWT. |
-| `version` | string | Plugin version string, e.g. `"0.15.0"`. |
+| `version` | string | Plugin version string, e.g. `"0.15.1"`. |
 | `ts` | number | Unix epoch seconds at publish time. |
 
 ---

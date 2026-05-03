@@ -17,8 +17,14 @@ namespace KSPBridge
     /// </summary>
     public class Settings
     {
-        /// <summary>Hostname or IP of the MQTT broker.</summary>
-        public string BrokerHost { get; set; } = "appserv1.local";
+        /// <summary>
+        /// Hostname or IP of the MQTT broker. Defaults to localhost
+        /// because most users run mosquitto on the same machine as
+        /// KSP — that gives a fresh install something to connect to
+        /// out of the box. Override in Settings.cfg to point at a
+        /// remote broker (homelab, cloud, etc.).
+        /// </summary>
+        public string BrokerHost { get; set; } = "localhost";
 
         /// <summary>MQTT TCP port (not WebSocket).</summary>
         public int BrokerPort { get; set; } = 1883;
