@@ -83,6 +83,62 @@ All KSA-Bridge schema topics now have producers. See
 [docs/TOPICS.md](docs/TOPICS.md) for the full authoritative schema
 reference for every published topic.
 
+## Installing
+
+The simplest path is to grab a built release from the GitHub Releases
+page rather than building from source. The release zip follows the
+standard KSP mod layout — extract it into your KSP install root and the
+plugin lands in the right place.
+
+1. **Download** the latest `KSPBridge-vX.Y.Z.zip` from
+   [Releases](https://github.com/johnmknight/KSPBridge/releases).
+2. **Extract into your KSP install root** — the folder containing
+   `KSP_x64.exe`. On a default Steam install this is
+   `C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program\`.
+   The zip's `GameData/KSPBridge/` folder will land alongside KSP's
+   built-in `GameData/Squad/` (and any other mods).
+3. **Edit `GameData/KSPBridge/Settings.cfg`** to point at your MQTT
+   broker. The shipped defaults (`appserv1.local:1883`, topic prefix
+   `ksp/telemetry`) target the author's homelab — almost certainly
+   not yours. See [Configuration](#configuration) below.
+4. **Launch KSP.** The plugin connects to the broker on startup and
+   begins publishing as soon as you enter the flight scene.
+
+### Verifying it works
+
+Two quick checks. First, KSP's own log:
+
+```
+<KSP root>\KSP.log
+```
+
+Look for `[KSPBridge]` lines — you should see the version banner, the
+broker target, and `MQTT connected to <host>:<port>`. If you see
+`MQTT connect failed:` instead, fix `Settings.cfg` and relaunch.
+
+Second, from any machine that can reach your broker, watch the topics:
+
+```
+mosquitto_sub -h <broker_host> -p <broker_port> -t 'ksp/telemetry/#' -v
+```
+
+In the flight scene you should see all 18 topics ticking on their
+respective rates. `_bridge/status` is retained — even outside the
+flight scene a fresh subscriber should see at least the heartbeat.
+
+### Upgrading
+
+The release zip contains both the plugin DLLs and a reference
+`Settings.cfg`. If you're upgrading and have already customised your
+broker settings, **back up your `Settings.cfg` before extracting** —
+Windows extraction tools overwrite by default and will silently clobber
+your edits. Alternatively, extract only the `GameData/KSPBridge/Plugins/`
+subfolder and skip the rest of the archive.
+
+If you're building from source instead, the `dotnet build` post-build
+target only deploys `*.dll`s; your existing `Settings.cfg` is preserved
+across rebuilds.
+
 ## Architecture at a glance
 
 ```
@@ -179,7 +235,7 @@ Edit `GameData/KSPBridge/Settings.cfg` in your KSP install:
 KSPBRIDGE
 {
     broker_host  = appserv1.local
-    broker_port  = 1884
+    broker_port  = 1883
     topic_prefix = ksp/telemetry
     client_id    = kspbridge
 }

@@ -21,7 +21,7 @@ namespace KSPBridge
         public string BrokerHost { get; set; } = "appserv1.local";
 
         /// <summary>MQTT TCP port (not WebSocket).</summary>
-        public int BrokerPort { get; set; } = 1884;
+        public int BrokerPort { get; set; } = 1883;
 
         /// <summary>Prefix prepended to every published topic.</summary>
         public string TopicPrefix { get; set; } = "ksp/telemetry";
