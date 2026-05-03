@@ -117,6 +117,71 @@ $versionJson = @"
 [System.IO.File]::WriteAllText($versionJsonPath, $versionJson, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "Regenerated KSPBridge.version for v$version"
 
+# If the regen actually changed the file vs what's committed, auto-stage
+# and commit just that file so the build below embeds the right
+# SourceLink hash and the user does not have to remember a separate
+# "git add + git commit" step after running this script.
+#
+# We commit ONLY the .version file (path-scoped commit) so any other
+# unrelated working-tree changes the user has in flight are NOT
+# accidentally swept up.
+$git = (Get-Command git -ErrorAction SilentlyContinue).Source
+if (-not $git -and (Test-Path 'C:\Program Files\Git\bin\git.exe')) {
+    $git = 'C:\Program Files\Git\bin\git.exe'
+}
+if ($git) {
+    $diffArgs = @('-C', $repo, 'diff', '--quiet', '--', 'GameData/KSPBridge/KSPBridge.version')
+    $diffInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $diffInfo.FileName = $git
+    $diffInfo.Arguments = ($diffArgs -join ' ')
+    $diffInfo.UseShellExecute = $false
+    $diffInfo.RedirectStandardOutput = $true
+    $diffInfo.RedirectStandardError = $true
+    $diffProc = [System.Diagnostics.Process]::Start($diffInfo)
+    $diffProc.WaitForExit()
+    $regenChanged = ($diffProc.ExitCode -ne 0)
+
+    if ($regenChanged) {
+        Write-Host "  KSPBridge.version content differs from HEAD; committing the regen." -ForegroundColor Yellow
+
+        $addInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $addInfo.FileName = $git
+        $addInfo.Arguments = "-C `"$repo`" add GameData/KSPBridge/KSPBridge.version"
+        $addInfo.UseShellExecute = $false
+        $addInfo.RedirectStandardOutput = $true
+        $addInfo.RedirectStandardError = $true
+        $addProc = [System.Diagnostics.Process]::Start($addInfo)
+        $addProc.WaitForExit()
+        if ($addProc.ExitCode -ne 0) {
+            Write-Host "  git add failed (exit $($addProc.ExitCode)); regen left staged for manual commit." -ForegroundColor Red
+        } else {
+            $msg = "release-tooling: regenerate KSPBridge.version for v$version"
+            $commitInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $commitInfo.FileName = $git
+            $commitInfo.Arguments = "-C `"$repo`" commit -m `"$msg`" -- GameData/KSPBridge/KSPBridge.version"
+            $commitInfo.UseShellExecute = $false
+            $commitInfo.RedirectStandardOutput = $true
+            $commitInfo.RedirectStandardError = $true
+            $commitProc = [System.Diagnostics.Process]::Start($commitInfo)
+            $commitOut = $commitProc.StandardOutput.ReadToEnd()
+            $commitErr = $commitProc.StandardError.ReadToEnd()
+            $commitProc.WaitForExit()
+            if ($commitProc.ExitCode -eq 0) {
+                Write-Host "  Committed: $msg" -ForegroundColor Green
+                Write-Host "  Remember to 'git push' before tagging the release." -ForegroundColor Yellow
+            } else {
+                Write-Host "  git commit failed (exit $($commitProc.ExitCode))." -ForegroundColor Red
+                if ($commitOut) { Write-Host "    $commitOut" -ForegroundColor DarkGray }
+                if ($commitErr) { Write-Host "    $commitErr" -ForegroundColor DarkGray }
+                Write-Host "  Regen is staged - finish the commit manually before tagging." -ForegroundColor Yellow
+            }
+        }
+    }
+} else {
+    Write-Host "  git not on PATH; skipping auto-commit of KSPBridge.version regen." -ForegroundColor Yellow
+    Write-Host "  Remember to 'git add GameData/KSPBridge/KSPBridge.version && git commit'." -ForegroundColor Yellow
+}
+
 # Locate dotnet. Prefer PATH; fall back to the canonical install path.
 # Some launching contexts (notably automation that spawns a fresh
 # powershell.exe with a stripped PATH) won't have dotnet on PATH even
