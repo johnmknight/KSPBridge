@@ -7,6 +7,11 @@ Grafana, or any MQTT subscriber can consume real-time flight data. Wire format
 matches KSA-Bridge's topic names and JSON schemas, so consoles and dashboards
 built for one game work against the other with only a topic-prefix change.
 
+![Hard-scifi FDO mission-control console rendering live KSPBridge telemetry: vessel ID, orbital elements, body-aware planet view, and ΔV / TWR readouts populated from real game data.](docs/images/fdo-console.png)
+
+*The bundled hard-scifi FDO console rendering live telemetry from KSP — see
+[Browser console](#browser-console) for how to run it.*
+
 ## Status — v0.15.0
 
 **Eighteen telemetry topics shipping — full KSA-Bridge schema parity.**
@@ -261,13 +266,19 @@ to match your own Mosquitto (or other MQTT broker).
 
 ## Browser console
 
+![FDO console screenshot — full-page hard-scifi mission-control layout showing vessel telemetry, orbital elements, body-aware planet rotation, attitude, and performance readouts.](docs/images/fdo-console.png)
+
 The bundled `consoles/hard-scifi/hardscifi-fdo-console.html` is an FDO-style
 mission-control dashboard adapted from KSA-Bridge. Open it via a local HTTP
 server (file:// breaks texture loads in most browsers) — connects to the
-homelab Mosquitto broker over WebSocket at `ws://appserv1.local:9002` and
-subscribes to `ksp/telemetry/#`. Three.js draws the planet and orbit; the
-panels pull live data from the topics documented in
-[docs/TOPICS.md](docs/TOPICS.md).
+configured Mosquitto broker over WebSocket and subscribes to
+`ksp/telemetry/#`. Three.js draws the planet and orbit; the panels pull
+live data from the topics documented in [docs/TOPICS.md](docs/TOPICS.md).
+
+The default broker URL is `ws://appserv1.local:9002`. To target a
+different broker without editing the file, append a `?broker=` query
+parameter — for example
+`http://localhost:8000/hardscifi-fdo-console.html?broker=ws://localhost:9002`.
 
 Quick start:
 
@@ -276,6 +287,12 @@ cd consoles/hard-scifi
 python -m http.server 8000
 # then open http://localhost:8000/hardscifi-fdo-console.html
 ```
+
+`install-check.bat` (shipped in the release zip) can also start the
+console for you: after the verification checks pass it offers an
+interactive prompt to spin up `python -m http.server` and open the
+console URL with the broker query parameter pre-filled to match your
+`Settings.cfg`.
 
 ### Per-body assets
 
